@@ -1,0 +1,23 @@
+# ═══════════════════════════════════════════════
+#  FLODON INTERNAL — Caddy Server Routing
+# ═══════════════════════════════════════════════
+
+internal.flodon.in {
+    # Route all traffic to the internal-software container on port 10011
+    reverse_proxy internal-software:10011
+
+    # Standard security headers
+    header {
+        # Protect against clickjacking
+        X-Frame-Options "DENY"
+        # Enable XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Prevent mime type sniffing
+        X-Content-Type-Options "nosniff"
+        # Content security policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Enable gzip & zstd compression
+    encode gzip zstd
+}

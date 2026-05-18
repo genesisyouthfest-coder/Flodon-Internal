@@ -1,0 +1,67 @@
+version: '3.8'
+
+# ═══════════════════════════════════════════════
+#  FLODON INTERNAL — VPS Production Orchestration
+# ═══════════════════════════════════════════════
+
+services:
+  # ─── 1. Internal Software Dashboard & APIs ───
+  internal-software:
+    build:
+      context: .
+      target: internal-software
+    container_name: flodon-internal-software
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - API_PORT=10011
+      - BOT_PORT=10010
+      - NODE_ENV=production
+    ports:
+      - "10011:10011"
+    networks:
+      - flodon-network
+
+  # ─── 2. Discord Bot Service ───
+  discord-bot:
+    build:
+      context: .
+      target: discord-bot
+    container_name: flodon-discord-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - API_PORT=10011
+      - BOT_PORT=10010
+      - NODE_ENV=production
+    ports:
+      - "10010:10010"
+    networks:
+      - flodon-network
+
+  # ─── 3. Caddy HTTPS Reverse Proxy ───
+  caddy:
+    image: caddy:2-alpine
+    container_name: flodon-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - internal-software
+    networks:
+      - flodon-network
+
+networks:
+  flodon-network:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
