@@ -94,6 +94,49 @@ http.createServer(async (req, res) => {
   res.end('Not Found')
 }).listen(PORT, () => {
   log(`Server listening on port ${PORT} (Webhooks + Heartbeat)`)
+
+  // ─── Keep-Alive / Anti-Spin Down Mechanism ────
+  const RENDER_URL = process.env.RENDER_EXTERNAL_URL
+  const pingUrls = []
+
+  if (RENDER_URL) {
+    pingUrls.push(RENDER_URL)
+  }
+  // Cross-ping production URLs if running on Render
+  if (process.env.RENDER === 'true' || process.env.RENDER) {
+    const botUrl = 'https://flodon-discord-bot.onrender.com'
+    const apiUrl = 'https://flodon-internal-software.onrender.com'
+    if (!pingUrls.includes(botUrl)) pingUrls.push(botUrl)
+    if (!pingUrls.includes(apiUrl)) pingUrls.push(apiUrl)
+  }
+
+  if (pingUrls.length > 0) {
+    // Initial ping after 30 seconds
+    setTimeout(() => {
+      pingUrls.forEach(async (url) => {
+        try {
+          const res = await fetch(url)
+          log(`[Keep-Alive] Initial ping to ${url} - Status: ${res.status}`)
+        } catch (err) {
+          log(`[Keep-Alive] Initial ping to ${url} failed: ${err.message}`, 'error')
+        }
+      })
+    }, 30000)
+
+    // Periodic ping every 10 minutes
+    setInterval(() => {
+      pingUrls.forEach(async (url) => {
+        try {
+          const res = await fetch(url)
+          log(`[Keep-Alive] Periodic ping to ${url} - Status: ${res.status}`)
+        } catch (err) {
+          log(`[Keep-Alive] Periodic ping to ${url} failed: ${err.message}`, 'error')
+        }
+      })
+    }, 10 * 60 * 1000)
+    
+    log(`[Keep-Alive] Active: Monitoring URLs [${pingUrls.join(', ')}] every 10 minutes`)
+  }
 })
 
 // ─── Discord Client ───────────────────────────
