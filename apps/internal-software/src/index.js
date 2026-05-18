@@ -6,7 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { readdirSync } from 'fs'
 import http from 'http'
-import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log, handleWebhookEmails } from '@flodon/core'
+import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log, handleWebhookEmails, clearEmailConfigCache } from '@flodon/core'
+import { getDashboardHTML } from './dashboard.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.API_PORT || 10001
@@ -14,63 +15,138 @@ const PORT = process.env.API_PORT || 10001
 // Helper to format Role Pings
 const tagRole = (roleId) => roleId.startsWith('<@&') ? roleId : `<@&${roleId}>`
 
+// Helper: read JSON body from request
+async function readBody(req) {
+  let body = ''
+  for await (const chunk of req) body += chunk
+  return body
+}
+
 http.createServer(async (req, res) => {
   const { method, url, headers } = req
 
-  // 1. Health Check (Heartbeat)
-  if (method === 'GET' && url === '/') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' })
-    return res.end('SYSTEM ONLINE: Flodon Internal Intelligence Active\n')
+  // ─── CORS Headers (for dashboard fetch calls) ───
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  if (method === 'OPTIONS') { res.writeHead(204); return res.end() }
+
+  // ─── 1. Dashboard (Landing Page) ───
+  if (method === 'GET' && (url === '/' || url === '/dashboard')) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    return res.end(getDashboardHTML())
   }
 
-  // 2. Webhook Handling
+  // ─── 2. GET /api/settings — Fetch all settings ───
+  if (method === 'GET' && url === '/api/settings') {
+    try {
+      const { data, error } = await supabase
+        .from('settings')
+        .select('key, value, updated_at')
+        .order('key')
+      if (error) throw error
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ success: true, settings: data }))
+    } catch (err) {
+      log(`[Settings] Fetch error: ${err.message}`, 'error')
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ success: false, error: err.message }))
+    }
+  }
+
+  // ─── 3. POST /api/settings — Update settings ───
+  if (method === 'POST' && url === '/api/settings') {
+    try {
+      const body = await readBody(req)
+      const { settings } = JSON.parse(body)
+
+      if (!settings || typeof settings !== 'object') {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify({ success: false, error: 'Invalid payload' }))
+      }
+
+      // Upsert each key-value pair
+      const entries = Object.entries(settings)
+      for (const [key, value] of entries) {
+        const { error } = await supabase
+          .from('settings')
+          .upsert({ key, value: String(value), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+        if (error) throw error
+      }
+
+      // Bust the email config cache so changes take effect immediately
+      clearEmailConfigCache()
+
+      log(`[Settings] Updated ${entries.length} setting(s): [${entries.map(e => e[0]).join(', ')}]`)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ success: true, updated: entries.length }))
+    } catch (err) {
+      log(`[Settings] Update error: ${err.message}`, 'error')
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ success: false, error: err.message }))
+    }
+  }
+
+  // ─── 4. POST /api/test-email — Send a test email ───
+  if (method === 'POST' && url === '/api/test-email') {
+    try {
+      const body = await readBody(req)
+      const { to } = JSON.parse(body)
+      const { sendEmail } = await import('@flodon/core')
+
+      // Bust cache to use latest settings
+      clearEmailConfigCache()
+
+      const result = await sendEmail({
+        to: to || 'sanskarkolekarr@gmail.com',
+        subject: '✅ Flodon Email Test — System Active',
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; margin: 0 auto; padding: 30px 20px; color: #1c1917; text-align: center;">
+            <h2 style="font-size: 22px; font-weight: 700; color: #0c0a09; margin-bottom: 15px;">✅ Email System Active</h2>
+            <p style="font-size: 16px; color: #44403c; margin-bottom: 25px;">This is a test email from the Flodon Internal Operations Dashboard.</p>
+            <p style="font-size: 14px; color: #78716c;">If you received this, your Gmail SMTP configuration is working correctly.</p>
+            <hr style="border: 0; border-top: 1px solid #e7e5e4; margin: 25px 0;" />
+            <p style="font-size: 12px; color: #a8a29e;">Sent at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</p>
+          </div>
+        `
+      })
+
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify(result))
+    } catch (err) {
+      log(`[Test Email] Error: ${err.message}`, 'error')
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ success: false, error: err.message }))
+    }
+  }
+
+  // ─── 5. Webhook Handling ───
   if (method === 'POST' && url.startsWith('/api/webhook/')) {
-    // Auth Check
     const auth = headers['authorization']
     if (auth !== `Bearer ${process.env.CRM_WEBHOOK_TOKEN}`) {
       res.writeHead(401)
       return res.end('Unauthorized')
     }
 
-    // Collect Body
-    let body = ''
-    for await (const chunk of req) {
-      body += chunk
-    }
-
     try {
+      const body = await readBody(req)
       const payload = JSON.parse(body)
       const endpoint = url.split('/').pop()
       
-      // Determine Channel: Both lead and cancel now go to #calls
       let channelId = CHANNELS.calls 
-      
-      // Use fetch if not in cache
       const channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId).catch(() => null)
 
       if (channel) {
         let messageOptions = {}
 
-        // 1. Raw Lead / Booking Payload
         if (endpoint === 'lead' && payload.name && !payload.embeds) {
-          messageOptions = {
-            content: tagRole(ROLES.sales),
-            embeds: [buildWebLeadEmbed(payload)]
-          }
+          messageOptions = { content: tagRole(ROLES.sales), embeds: [buildWebLeadEmbed(payload)] }
         } 
-        // 2. Raw Cancellation Payload
         else if (endpoint === 'cancel' && payload.name && !payload.embeds) {
-          messageOptions = {
-            content: tagRole(ROLES.sales),
-            embeds: [buildWebhookCancelEmbed(payload)]
-          }
+          messageOptions = { content: tagRole(ROLES.sales), embeds: [buildWebhookCancelEmbed(payload)] }
         }
-        // 3. Fallback (Discord pre-formatted payload)
         else {
-          messageOptions = {
-            content: payload.content || null,
-            embeds: payload.embeds || []
-          }
+          messageOptions = { content: payload.content || null, embeds: payload.embeds || [] }
         }
 
         await channel.send(messageOptions)
@@ -97,7 +173,7 @@ http.createServer(async (req, res) => {
   res.writeHead(404)
   res.end('Not Found')
 }).listen(PORT, () => {
-  log(`Server listening on port ${PORT} (Webhooks + Heartbeat)`)
+  log(`Server listening on port ${PORT} (Dashboard + Webhooks + API)`)
 
   // ─── Keep-Alive / Anti-Spin Down Mechanism ────
   const RENDER_URL = process.env.RENDER_EXTERNAL_URL
@@ -106,7 +182,6 @@ http.createServer(async (req, res) => {
   if (RENDER_URL) {
     pingUrls.push(RENDER_URL)
   }
-  // Cross-ping production URLs if running on Render
   if (process.env.RENDER === 'true' || process.env.RENDER) {
     const botUrl = 'https://flodon-discord-bot.onrender.com'
     const apiUrl = 'https://flodon-internal-software.onrender.com'
@@ -115,7 +190,6 @@ http.createServer(async (req, res) => {
   }
 
   if (pingUrls.length > 0) {
-    // Initial ping after 30 seconds
     setTimeout(() => {
       pingUrls.forEach(async (url) => {
         try {
@@ -127,7 +201,6 @@ http.createServer(async (req, res) => {
       })
     }, 30000)
 
-    // Periodic ping every 10 minutes
     setInterval(() => {
       pingUrls.forEach(async (url) => {
         try {
