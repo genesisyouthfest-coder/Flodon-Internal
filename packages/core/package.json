@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "dependencies": {
     "@supabase/supabase-js": "^2.39.8",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "nodemailer": "^8.0.7"
   }
 }

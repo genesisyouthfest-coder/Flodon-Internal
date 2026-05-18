@@ -1,51 +1,60 @@
+import nodemailer from 'nodemailer'
 import { log } from './logger.js'
 
+// ─── Gmail SMTP Transporter (created lazily on first use) ───
+let transporter = null
+
+function getTransporter() {
+  if (transporter) return transporter
+
+  const user = process.env.GMAIL_USER
+  const pass = process.env.GMAIL_APP_PASSWORD
+
+  if (!user || !pass) {
+    log('[Email] Skipping: GMAIL_USER or GMAIL_APP_PASSWORD not configured.', 'warning')
+    return null
+  }
+
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user, pass },
+  })
+
+  log(`[Email] Gmail SMTP transporter ready (${user})`)
+  return transporter
+}
+
 /**
- * Sends an email using the Resend API via lightweight built-in fetch.
+ * Sends an email via Gmail SMTP.
  * 
  * @param {Object} options
  * @param {string|string[]} options.to - Recipient email address(es)
  * @param {string} options.subject - Email subject line
  * @param {string} options.html - HTML body content
- * @param {string} [options.from] - Sender address (defaults to process.env.RESEND_FROM_EMAIL)
+ * @param {string} [options.from] - Sender display name override
  */
 export async function sendEmail({ to, subject, html, from }) {
-  const apiKey = process.env.RESEND_API_KEY
-  const fromAddress = from || process.env.RESEND_FROM_EMAIL || 'Flodon Operations <noreply@flodon.in>'
+  const smtp = getTransporter()
+  if (!smtp) return { success: false, error: 'Gmail SMTP not configured' }
 
-  if (!apiKey) {
-    log('[Resend] Skipping email send: RESEND_API_KEY is not defined in the environment.', 'warning')
-    return { success: false, error: 'RESEND_API_KEY not configured' }
-  }
+  const fromAddress = from || process.env.GMAIL_FROM_NAME
+    ? `${process.env.GMAIL_FROM_NAME || 'Flodon Operations'} <${process.env.GMAIL_USER}>`
+    : process.env.GMAIL_USER
 
-  const toList = Array.isArray(to) ? to : [to]
+  const toList = Array.isArray(to) ? to.join(', ') : to
 
   try {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        from: fromAddress,
-        to: toList,
-        subject,
-        html,
-      }),
+    const info = await smtp.sendMail({
+      from: fromAddress,
+      to: toList,
+      subject,
+      html,
     })
 
-    const data = await response.json()
-
-    if (!response.ok) {
-      log(`[Resend] Failed to send email to [${toList.join(', ')}]: ${data.message || response.statusText}`, 'error')
-      return { success: false, error: data.message || response.statusText }
-    }
-
-    log(`[Resend] Email successfully sent to [${toList.join(', ')}]. ID: ${data.id}`)
-    return { success: true, id: data.id }
+    log(`[Email] Sent to [${toList}] — Message ID: ${info.messageId}`)
+    return { success: true, messageId: info.messageId }
   } catch (error) {
-    log(`[Resend] Exception occurred while sending email: ${error.message}`, 'error')
+    log(`[Email] Failed to send to [${toList}]: ${error.message}`, 'error')
     return { success: false, error: error.message }
   }
 }
@@ -58,7 +67,7 @@ export async function sendEmail({ to, subject, html, from }) {
  * @param {Object} payload - Webhook payload
  */
 export async function handleWebhookEmails(endpoint, payload) {
-  const adminEmail = process.env.ADMIN_EMAIL || 'sanskarkolekarr@gmail.com'
+  const adminEmail = process.env.ADMIN_EMAIL || process.env.GMAIL_USER
 
   if (endpoint === 'lead') {
     const clientEmail = payload.email
