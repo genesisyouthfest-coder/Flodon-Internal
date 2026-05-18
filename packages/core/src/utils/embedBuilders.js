@@ -30,6 +30,7 @@ export function buildWebLeadEmbed(lead) {
     { name: 'Lead Source', value: q.leadSources || q.leadSource || 'N/A', inline: false },
     { name: 'Biggest Bottleneck', value: q.biggestBottleneck || 'N/A', inline: false },
     { name: '90-Day Goal', value: q.ninetyDayGoal || q.goal || 'N/A', inline: false },
+    { name: 'Quick Actions', value: '🖥️ [Visit Software Dashboard](https://flodon-internal-software.onrender.com)  ·  💼 [Visit Ops Portal](https://flodon.in/ops)', inline: false },
   ]
 
   return {
@@ -53,6 +54,7 @@ export function buildWebhookCancelEmbed(payload) {
       { name: 'Phone', value: payload.phone || payload.phone_number || 'N/A', inline: false },
       { name: 'Date & Time', value: `${payload.date || 'N/A'} | ${payload.startTime || 'N/A'}`, inline: false },
       { name: 'Reason', value: payload.reason || 'N/A', inline: false },
+      { name: 'Quick Actions', value: '🖥️ [Visit Software Dashboard](https://flodon-internal-software.onrender.com)  ·  💼 [Visit Ops Portal](https://flodon.in/ops)', inline: false },
     ],
     timestamp: new Date().toISOString(),
   }

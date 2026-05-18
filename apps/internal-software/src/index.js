@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { readdirSync } from 'fs'
 import http from 'http'
-import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log } from '@flodon/core'
+import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log, handleWebhookEmails } from '@flodon/core'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.API_PORT || 10001
@@ -75,6 +75,10 @@ http.createServer(async (req, res) => {
 
         await channel.send(messageOptions)
         log(`Webhook processed: ${endpoint} -> ${channelId}`)
+
+        // Trigger emails in the background (non-blocking)
+        handleWebhookEmails(endpoint, payload).catch(err => log(`Email trigger failed: ${err.message}`, 'error'))
+
         res.writeHead(200)
         return res.end('OK')
       } else {
