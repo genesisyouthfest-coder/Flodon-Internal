@@ -4,6 +4,7 @@
 
 # ─── Stage 1: Base & Core Package Setup ───
 FROM node:20-alpine AS base
+RUN apk add --no-cache wget
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/core ./packages/core

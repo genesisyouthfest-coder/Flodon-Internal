@@ -6,8 +6,10 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { readdirSync } from 'fs'
 import http from 'http'
-import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log, handleWebhookEmails, clearEmailConfigCache } from '@flodon/core'
+import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log, handleWebhookEmails, clearEmailConfigCache, processEmailQueue } from '@flodon/core'
 import { getDashboardHTML } from './dashboard.js'
+import { getCRMHTML } from './crmUI.js'
+import { handleCRMRequest } from './crm.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.API_PORT || 10001
@@ -169,6 +171,19 @@ http.createServer(async (req, res) => {
     }
   }
 
+  // ─── CRM Routes ───
+  if (url.startsWith('/crm/api/')) {
+    const body = method !== 'GET' ? JSON.parse(await readBody(req)) : null
+    const handled = await handleCRMRequest(req, res, url, method, body)
+    if (handled) return
+  }
+
+  // ─── CRM Dashboard Pages ───
+  if (method === 'GET' && url.startsWith('/crm')) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    return res.end(getCRMHTML(url))
+  }
+
   // 404
   res.writeHead(404)
   res.end('Not Found')
@@ -206,6 +221,20 @@ http.createServer(async (req, res) => {
     
     log(`[Keep-Alive] Active: Monitoring URLs [${pingUrls.join(', ')}] every 10 minutes`)
   }
+
+  // ─── Email Queue Processor ───
+  setInterval(async () => {
+    try {
+      const result = await processEmailQueue()
+      if (result.processed > 0) {
+        log(`[Email Queue] Processed ${result.processed} email(s). Sent: ${result.sent}, Failed: ${result.failed}`)
+      }
+    } catch (err) {
+      log(`[Email Queue] Processor error: ${err.message}`, 'error')
+    }
+  }, 60 * 1000) // runs every 60 seconds
+
+  log('[Email Queue] Processor active — checking every 60s')
 })
 
 // ─── Discord Client ───────────────────────────

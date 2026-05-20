@@ -183,7 +183,7 @@ export function getDashboardHTML() {
     /* ─── Quick Links ─── */
     .links {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 12px;
       margin-bottom: 24px;
     }
@@ -285,6 +285,13 @@ export function getDashboardHTML() {
         <div>
           <div class="link-text">Supabase</div>
           <div class="link-sub">Database Console</div>
+        </div>
+      </a>
+      <a href="/crm" target="_blank" class="link-card">
+        <span class="link-icon">📊</span>
+        <div>
+          <div class="link-text">Sales CRM</div>
+          <div class="link-sub">Pipeline & Clients</div>
         </div>
       </a>
     </div>

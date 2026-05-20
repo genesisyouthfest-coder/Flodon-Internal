@@ -7,7 +7,8 @@
   ],
   "scripts": {
     "bot:dev": "npm run dev -w apps/discord-bot",
-    "software:dev": "npm run dev -w apps/internal-software"
+    "software:dev": "npm run dev -w apps/internal-software",
+    "docker:dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build internal-software discord-bot"
   },
   "engines": {
     "node": ">=20.0.0"
