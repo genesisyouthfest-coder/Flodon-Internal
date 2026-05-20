@@ -1,51 +1,60 @@
-version: '3.8'
-
 # ═══════════════════════════════════════════════
 #  FLODON INTERNAL — VPS Production Orchestration
 # ═══════════════════════════════════════════════
 
 services:
-  # ─── 1. Internal Software Dashboard & APIs ───
   internal-software:
     build:
       context: .
       target: internal-software
-    container_name: flodon-internal-software
     restart: unless-stopped
+    init: true
     env_file:
       - .env
     environment:
       - API_PORT=10011
-      - BOT_PORT=10010
       - NODE_ENV=production
-    ports:
-      - "10011:10011"
+    expose:
+      - "10011"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:10011/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
     networks:
       - flodon-network
 
-  # ─── 2. Discord Bot Service ───
   discord-bot:
     build:
       context: .
       target: discord-bot
-    container_name: flodon-discord-bot
     restart: unless-stopped
+    init: true
     env_file:
       - .env
     environment:
-      - API_PORT=10011
       - BOT_PORT=10010
       - NODE_ENV=production
-    ports:
-      - "10010:10010"
+    expose:
+      - "10010"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:10010/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
     networks:
       - flodon-network
 
-  # ─── 3. Caddy HTTPS Reverse Proxy ───
   caddy:
     image: caddy:2-alpine
-    container_name: flodon-caddy
     restart: unless-stopped
+    init: true
     ports:
       - "80:80"
       - "443:443"
@@ -54,7 +63,10 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - internal-software
+      internal-software:
+        condition: service_healthy
+      discord-bot:
+        condition: service_healthy
     networks:
       - flodon-network
 

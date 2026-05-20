@@ -273,7 +273,7 @@ export function getDashboardHTML() {
           <div class="link-sub">flodon.in/book-a-call</div>
         </div>
       </a>
-      <a href="https://flodon-discord-bot.onrender.com" target="_blank" class="link-card">
+      <a href="${process.env.BOT_PUBLIC_URL || '#'}" target="_blank" class="link-card">
         <span class="link-icon">🤖</span>
         <div>
           <div class="link-text">Discord Bot</div>

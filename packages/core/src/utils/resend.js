@@ -1,6 +1,8 @@
 import nodemailer from 'nodemailer'
 import { log } from './logger.js'
 
+const SOFTWARE_DASHBOARD_URL = process.env.SOFTWARE_PUBLIC_URL || 'https://internal.flodon.in'
+
 // ─── Dynamic Config: DB-first, env fallback ───
 let cachedConfig = null
 let cacheExpiry = 0
@@ -181,7 +183,7 @@ export async function handleWebhookEmails(endpoint, payload) {
             <p style="font-size: 14px; margin: 12px 0 6px;"><strong>90-Day Goal:</strong><br/><em>"${payload.ninetyDayGoal || q.ninetyDayGoal || q.goal || 'N/A'}"</em></p>
           </div>
           <div style="text-align: center;">
-            <a href="https://flodon-internal-software.onrender.com" style="background-color: #0c0a09; color: #fafaf9; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block; margin-right: 10px;">🖥️ Dashboard</a>
+            <a href="${SOFTWARE_DASHBOARD_URL}" style="background-color: #0c0a09; color: #fafaf9; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block; margin-right: 10px;">🖥️ Dashboard</a>
             <a href="https://flodon.in/ops" style="background-color: #44403c; color: #fafaf9; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block;">💼 Ops Portal</a>
           </div>
         </div>
@@ -223,7 +225,7 @@ export async function handleWebhookEmails(endpoint, payload) {
             </table>
           </div>
           <div style="text-align: center;">
-            <a href="https://flodon-internal-software.onrender.com" style="background-color: #0c0a09; color: #fafaf9; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block; margin-right: 10px;">🖥️ Dashboard</a>
+            <a href="${SOFTWARE_DASHBOARD_URL}" style="background-color: #0c0a09; color: #fafaf9; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block; margin-right: 10px;">🖥️ Dashboard</a>
             <a href="https://flodon.in/ops" style="background-color: #44403c; color: #fafaf9; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block;">💼 Ops Portal</a>
           </div>
         </div>
