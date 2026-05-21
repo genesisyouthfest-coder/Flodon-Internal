@@ -96,6 +96,17 @@ async function getDashboardStats() {
     emailQueueByStatus[row.status] = (emailQueueByStatus[row.status] || 0) + 1
   }
 
+  const wonDeals = (allDeals || []).filter(d => d.stage === 'closed_won')
+  const avgDealSize = wonDeals.length > 0
+    ? wonDeals.reduce((sum, d) => sum + (Number(d.amount_monthly) || 0), 0) / wonDeals.length
+    : 0
+
+  const mappedRecentActivity = (recentActivity || []).map(row => ({
+    ...row,
+    profile_name: row.profiles?.full_name || null,
+    profiles: undefined,
+  }))
+
   return {
     pipelineValue,
     dealsByStage,
@@ -104,11 +115,17 @@ async function getDashboardStats() {
     newClientsThisWeek: newClientsThisWeek || 0,
     emailQueueByStatus,
     overdueTasks: overdueTasks || 0,
-    recentActivity: (recentActivity || []).map(row => ({
-      ...row,
-      profile_name: row.profiles?.full_name || null,
-      profiles: undefined,
-    })),
+    recentActivity: mappedRecentActivity,
+
+    // Snake case fallback for frontend dashboard
+    pipeline_value: pipelineValue,
+    deals_by_stage: dealsByStage,
+    closed_won_value: closedWonThisMonthValue,
+    closed_won_count: closedWonThisMonthCount,
+    conversion_rate: Math.round(conversionRate * 100) / 100,
+    avg_deal_size: Math.round(avgDealSize * 100) / 100,
+    email_queue: emailQueueByStatus,
+    recent_activity: mappedRecentActivity,
   }
 }
 

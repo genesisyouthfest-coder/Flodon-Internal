@@ -11,6 +11,7 @@ export function log(message, level = 'info') {
   const prefix = {
     info:  `${COLORS.cyan}[INFO]${COLORS.reset}`,
     warn:  `${COLORS.yellow}[WARN]${COLORS.reset}`,
+    warning: `${COLORS.yellow}[WARN]${COLORS.reset}`,
     error: `${COLORS.red}[ERROR]${COLORS.reset}`,
     ok:    `${COLORS.green}[OK]${COLORS.reset}`,
   }[level] || `[LOG]`

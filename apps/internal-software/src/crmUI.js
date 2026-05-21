@@ -726,7 +726,7 @@ export function getCRMHTML(url) {
     async function loadClientsList() {
       if (cachedClients) return cachedClients
       var res = await api('/clients?page=1&search=')
-      cachedClients = res.data || res.clients || []
+      cachedClients = res.data?.clients || res.clients || []
       return cachedClients
     }
 
@@ -933,7 +933,7 @@ export function getCRMHTML(url) {
     async function loadDealActivity(dealId) {
       try {
         var res = await api('/dashboard-stats')
-        var items = (res.data || res).recent_activity || []
+        var items = (res.data || res).recent_activity || (res.data || res).recentActivity || []
         var filtered = items.filter(function(a) {
           return String(a.entity_id) === String(dealId) || (a.metadata && String(a.metadata.deal_id) === String(dealId))
         })
@@ -1020,7 +1020,7 @@ export function getCRMHTML(url) {
       try {
         var q = '?page=1&search=' + encodeURIComponent(clientFilters.search) + '&stage=' + encodeURIComponent(clientFilters.stage)
         var res = await api('/clients' + q)
-        var clients = res.data || res.clients || []
+        var clients = res.data?.clients || res.clients || []
 
         document.getElementById('clients-table').innerHTML = clients.length
           ? '<table class="data-table"><thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Stage</th><th>Source</th><th>Created</th><th></th></tr></thead><tbody>' +
@@ -1080,7 +1080,7 @@ export function getCRMHTML(url) {
       try {
         var q = '?page=1&search='
         var res = await api('/clients' + q)
-        var clients = res.data || res.clients || []
+        var clients = res.data?.clients || res.clients || []
         var client = clients.find(function(c) { return String(c.id) === String(clientId) })
         if (!client) { showToast('Client not found', 'error'); return }
 
@@ -1388,7 +1388,7 @@ export function getCRMHTML(url) {
     async function loadEmailQueueTable() {
       try {
         var res = await api('/email-queue?page=1')
-        var rows = res.data || res.emails || res.queue || []
+        var rows = res.data?.items || res.emails || res.queue || []
 
         document.getElementById('queue-table').innerHTML = rows.length
           ? '<table class="data-table"><thead><tr><th>To</th><th>Type</th><th>Status</th><th>Scheduled At</th><th>Sent At</th><th>Subject</th><th></th></tr></thead><tbody>' +

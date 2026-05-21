@@ -247,7 +247,7 @@ client.on('messageCreate', async message => {
   }
 })
 
-client.once('clientReady', () => {
+client.once('ready', () => {
   log(`Logged in as ${client.user.tag}!`)
 })
 

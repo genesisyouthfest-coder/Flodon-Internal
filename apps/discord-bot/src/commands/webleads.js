@@ -27,7 +27,7 @@ export default {
     let query = supabase
       .from('clients')
       .select('id, name, brand_name, email, phone, pipeline_stage, qualification, booked_date, booked_start, booked_end, created_at')
-      .eq('lead_source', 'website')
+      .eq('source', 'website')
       .order('created_at', { ascending: false })
       .limit(limit)
 

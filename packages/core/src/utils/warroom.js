@@ -56,14 +56,14 @@ export async function updateWarRoom(guild) {
     const { count: webLeadsCount } = await supabase
       .from('clients')
       .select('*', { count: 'exact', head: true })
-      .eq('lead_source', 'website')
+      .eq('source', 'website')
       .gte('created_at', startOfMonth.toISOString())
 
     const hotLeadsCount = await (async () => {
       const { data } = await supabase
         .from('clients')
         .select('qualification')
-        .eq('lead_source', 'website')
+        .eq('source', 'website')
         .gte('created_at', startOfMonth.toISOString())
       return data?.filter(c =>
         c.qualification?.readyToMoveForward === 'Yes' && c.qualification?.investmentLevel

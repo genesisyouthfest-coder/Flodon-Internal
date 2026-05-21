@@ -297,7 +297,7 @@ client.on('interactionCreate', async interaction => {
   }
 })
 
-client.once('clientReady', () => {
+client.once('ready', () => {
   log(`Logged in as ${client.user.tag}!`)
 })
 
