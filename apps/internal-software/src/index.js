@@ -44,7 +44,7 @@ http.createServer(async (req, res) => {
     try {
       const { data, error } = await supabase
         .from('settings')
-        .select('key, value, updated_at')
+        .select('key, value')
         .order('key')
       if (error) throw error
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -72,7 +72,7 @@ http.createServer(async (req, res) => {
       for (const [key, value] of entries) {
         const { error } = await supabase
           .from('settings')
-          .upsert({ key, value: String(value), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+          .upsert({ key, value: String(value) }, { onConflict: 'key' })
         if (error) throw error
       }
 

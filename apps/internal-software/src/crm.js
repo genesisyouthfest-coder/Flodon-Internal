@@ -635,7 +635,7 @@ async function updateCrmSettings(body) {
   for (const [key, value] of entries) {
     const { error } = await supabase
       .from('settings')
-      .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+      .upsert({ key, value }, { onConflict: 'key' })
     if (error) throw error
   }
 
