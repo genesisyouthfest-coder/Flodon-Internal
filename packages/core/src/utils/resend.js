@@ -234,3 +234,210 @@ export async function handleWebhookEmails(endpoint, payload) {
     }
   }
 }
+
+/**
+ * Persists Cal.com / website webhook leads and cancellations to Supabase.
+ */
+export async function handleWebhookDBUpdates(endpoint, payload) {
+  const { supabase } = await import('../supabase.js')
+
+  const q = payload.biggestBottleneck ? payload : (payload.qualification || {})
+  const name = payload.name || 'Valued Client'
+  const email = payload.email
+  const phone = payload.phone || payload.phone_number || 'N/A'
+  const website = payload.website || q.website || payload.source_url || 'N/A'
+
+  const date = payload.date || payload.booked_date || 'N/A'
+  const start = payload.startTime || payload.booked_start || payload.start_time || 'N/A'
+  const end = payload.endTime || payload.booked_end || payload.end_time || ''
+
+  // Merge booking info into qualification JSONB
+  const qualification = {
+    ...q,
+    booked_date: date,
+    booked_start: start,
+    booked_end: end
+  }
+
+  if (endpoint === 'lead') {
+    if (!email) {
+      log('[Webhook DB] Cannot save lead: Email is required.', 'error')
+      return { success: false, error: 'Email is required' }
+    }
+
+    // 1. Check if client exists
+    const { data: existingClient } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle()
+
+    let client = null
+    if (existingClient) {
+      // Update existing client
+      const { data, error } = await supabase
+        .from('clients')
+        .update({
+          name,
+          phone,
+          source_url: website,
+          pipeline_stage: 'call_booked',
+          qualification,
+          notes: q.biggestBottleneck || null
+        })
+        .eq('id', existingClient.id)
+        .select()
+        .single()
+
+      if (error) {
+        log(`[Webhook DB] Failed to update client: ${error.message}`, 'error')
+        throw error
+      }
+      client = data
+      log(`[Webhook DB] Updated existing client (id=${client.id})`)
+    } else {
+      // Get admin profile name
+      const adminId = '00000000-0000-0000-0000-000000000001'
+      const { data: adminProfile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', adminId)
+        .maybeSingle()
+      const addedByName = adminProfile?.full_name || 'CRM Admin'
+      const service = payload.service || q.service || payload.eventTitle || 'General'
+
+      // Create new client
+      const { data, error } = await supabase
+        .from('clients')
+        .insert({
+          name,
+          email,
+          phone,
+          source_url: website,
+          pipeline_stage: 'call_booked',
+          lead_source: q.leadSources || q.leadSource || 'website',
+          qualification,
+          notes: q.biggestBottleneck || null,
+          added_by: adminId,
+          added_by_name: addedByName,
+          service: service
+        })
+        .select()
+        .single()
+
+      if (error) {
+        log(`[Webhook DB] Failed to create client: ${error.message}`, 'error')
+        throw error
+      }
+      client = data
+      log(`[Webhook DB] Created new client (id=${client.id})`)
+    }
+
+    // 2. Insert call
+    let scheduledAt = null
+    if (date !== 'N/A' && start !== 'N/A') {
+      try {
+        scheduledAt = new Date(`${date}T${start}`).toISOString()
+      } catch {
+        scheduledAt = new Date().toISOString()
+      }
+    } else {
+      scheduledAt = new Date().toISOString()
+    }
+
+    const { data: call, error: callError } = await supabase
+      .from('calls')
+      .insert({
+        client_id: client.id,
+        prospect_name: name,
+        company: q.company || null,
+        status: 'booked',
+        source: 'website',
+        scheduled_at: scheduledAt,
+      })
+      .select()
+      .single()
+
+    if (callError) {
+      log(`[Webhook DB] Failed to insert call: ${callError.message}`, 'error')
+    } else {
+      log(`[Webhook DB] Inserted call (id=${call.id})`)
+    }
+
+    // 3. Log Activity
+    const { error: actError } = await supabase
+      .from('activity_log')
+      .insert({
+        action: 'client_created',
+        entity_type: 'client',
+        entity_id: client.id,
+        metadata: { name, source: 'website' },
+        profile_id: '00000000-0000-0000-0000-000000000001'
+      })
+
+    if (actError) {
+      log(`[Webhook DB] Failed to log activity: ${actError.message}`, 'error')
+    }
+
+    return { success: true, clientId: client.id }
+  }
+
+  if (endpoint === 'cancel') {
+    if (!email) {
+      log('[Webhook DB] Cannot cancel call: Email is required.', 'error')
+      return { success: false, error: 'Email is required' }
+    }
+
+    // Find client
+    const { data: client } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle()
+
+    if (client) {
+      // Update client stage to 'lost'
+      await supabase
+        .from('clients')
+        .update({
+          pipeline_stage: 'lost'
+        })
+        .eq('id', client.id)
+
+      // Update call status
+      const { error: callUpdateError } = await supabase
+        .from('calls')
+        .update({
+          status: 'cancelled',
+          outcome: payload.reason || 'Cancelled via webhook'
+        })
+        .eq('client_id', client.id)
+        .eq('status', 'booked')
+
+      if (callUpdateError) {
+        log(`[Webhook DB] Failed to cancel calls: ${callUpdateError.message}`, 'error')
+      }
+
+      // Log Activity
+      await supabase
+        .from('activity_log')
+        .insert({
+          action: 'stage_changed',
+          entity_type: 'client',
+          entity_id: client.id,
+          metadata: { from: 'call_booked', to: 'lost', reason: payload.reason || 'Cancelled' },
+          profile_id: '00000000-0000-0000-0000-000000000001'
+        })
+
+      log(`[Webhook DB] Processed cancellation for client (id=${client.id})`)
+      return { success: true, clientId: client.id }
+    } else {
+      log(`[Webhook DB] Cancellation received but no client found for email ${email}`, 'warning')
+      return { success: false, error: 'Client not found' }
+    }
+  }
+
+  return { success: false, error: 'Invalid endpoint' }
+}
+
+

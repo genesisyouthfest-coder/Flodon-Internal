@@ -161,6 +161,8 @@ async function listClients(query) {
   return {
     clients: (data || []).map(c => ({
       ...c,
+      source: c.lead_source || 'manual',
+      website: c.source_url || null,
       company_name: c.companies?.name || null,
       companies: undefined,
     })),
@@ -174,6 +176,14 @@ async function listClients(query) {
 async function createClient(body) {
   const { name, email, phone, company_id, role, industry, source, notes, service } = body
 
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('full_name')
+    .eq('id', ADMIN_PROFILE_ID)
+    .maybeSingle()
+
+  const addedByName = profile?.full_name || 'CRM Admin'
+
   const { data: client, error } = await supabase
     .from('clients')
     .insert({
@@ -183,10 +193,11 @@ async function createClient(body) {
       company_id: company_id || null,
       role,
       industry,
-      source: source || 'manual',
+      lead_source: source || 'manual',
       notes,
-      service,
+      service: service || 'General',
       added_by: ADMIN_PROFILE_ID,
+      added_by_name: addedByName,
     })
     .select('*, companies(name)')
     .single()
@@ -209,6 +220,8 @@ async function createClient(body) {
 
   return {
     ...client,
+    source: client.lead_source || 'manual',
+    website: client.source_url || null,
     company_name: companyName,
     companies: undefined,
   }
@@ -227,9 +240,14 @@ async function updateClient(id, body) {
   const allowed = ['name', 'email', 'phone', 'company_id', 'role', 'industry', 'source', 'notes', 'service', 'pipeline_stage']
   const updates = {}
   for (const key of allowed) {
-    if (body[key] !== undefined) updates[key] = body[key]
+    if (body[key] !== undefined) {
+      if (key === 'source') {
+        updates.lead_source = body.source
+      } else {
+        updates[key] = body[key]
+      }
+    }
   }
-  updates.updated_at = new Date().toISOString()
 
   const { data: client, error } = await supabase
     .from('clients')
@@ -253,14 +271,16 @@ async function updateClient(id, body) {
     await queueCallBookingEmail(id, body.deal_id || null, body.call_id, {
       name: client.name,
       company: companyName,
-      date: call?.booked_date || call?.scheduled_at,
-      startTime: call?.booked_start || call?.start_time,
-      endTime: call?.booked_end || call?.end_time,
+      date: call?.scheduled_at,
+      startTime: null,
+      endTime: null,
     })
   }
 
   return {
     ...client,
+    source: client.lead_source || 'manual',
+    website: client.source_url || null,
     company_name: client.companies?.name || null,
     companies: undefined,
   }
@@ -273,17 +293,27 @@ async function listDeals(query) {
   let q = supabase
     .from('deals')
     .select('*, clients(name)')
-    .order('created_at', { ascending: false })
+    .order('logged_at', { ascending: false })
 
   if (clientId) q = q.eq('client_id', clientId)
   if (stage) q = q.eq('stage', stage)
 
-  const { data, error } = await q
-  if (error) throw error
+  const [dealsRes, profilesRes] = await Promise.all([
+    q,
+    supabase.from('profiles').select('id, full_name')
+  ])
 
-  return (data || []).map(d => ({
+  if (dealsRes.error) throw dealsRes.error
+
+  const profileMap = {}
+  for (const p of profilesRes.data || []) {
+    profileMap[p.id] = p.full_name
+  }
+
+  return (dealsRes.data || []).map(d => ({
     ...d,
     client_name: d.clients?.name || null,
+    assigned_name: profileMap[d.assigned_to] || '—',
     clients: undefined,
   }))
 }
@@ -297,11 +327,18 @@ async function createDeal(body) {
 
   if (error) throw error
 
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('full_name')
+    .eq('id', deal.assigned_to)
+    .maybeSingle()
+
   await logActivity('deal_created', 'deal', deal.id, { title: deal.title, stage: deal.stage })
 
   return {
     ...deal,
     client_name: deal.clients?.name || null,
+    assigned_name: profile?.full_name || '—',
     clients: undefined,
   }
 }
@@ -328,6 +365,12 @@ async function updateDeal(id, body) {
 
   if (error) throw error
 
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('full_name')
+    .eq('id', deal.assigned_to)
+    .maybeSingle()
+
   if (body.stage !== undefined && body.stage !== existing.stage) {
     await logActivity('stage_changed', 'deal', id, { from: existing.stage, to: body.stage })
   }
@@ -335,6 +378,7 @@ async function updateDeal(id, body) {
   return {
     ...deal,
     client_name: deal.clients?.name || null,
+    assigned_name: profile?.full_name || '—',
     clients: undefined,
   }
 }
@@ -367,9 +411,24 @@ async function getPipeline() {
 }
 
 async function listCompanies() {
-  const { data, error } = await supabase.from('companies').select('*').order('name')
-  if (error) throw error
-  return data
+  const [companiesRes, clientsRes] = await Promise.all([
+    supabase.from('companies').select('*').order('name'),
+    supabase.from('clients').select('company_id')
+  ])
+  if (companiesRes.error) throw companiesRes.error
+  if (clientsRes.error) throw clientsRes.error
+
+  const clientCounts = {}
+  for (const c of clientsRes.data || []) {
+    if (c.company_id) {
+      clientCounts[c.company_id] = (clientCounts[c.company_id] || 0) + 1
+    }
+  }
+
+  return (companiesRes.data || []).map(comp => ({
+    ...comp,
+    client_count: clientCounts[comp.id] || 0
+  }))
 }
 
 async function createCompany(body) {
@@ -380,31 +439,60 @@ async function createCompany(body) {
 }
 
 async function listTasks(query) {
-  let q = supabase.from('tasks').select('*').order('created_at', { ascending: false })
+  let q = supabase
+    .from('tasks')
+    .select('*, clients(name), deals(title)')
+    .order('created_at', { ascending: false })
 
   const assignedTo = query.get('assigned_to')
   const status = query.get('status')
   const clientId = query.get('client_id')
 
-  if (assignedTo) q = q.eq('assigned_to', assignedTo)
+  if (assignedTo) q = q.eq('agent_id', assignedTo)
   if (status) q = q.eq('status', status)
   if (clientId) q = q.eq('client_id', clientId)
 
-  const { data, error } = await q
-  if (error) throw error
-  return data
+  const [tasksRes, profilesRes] = await Promise.all([
+    q,
+    supabase.from('profiles').select('id, full_name')
+  ])
+
+  if (tasksRes.error) throw tasksRes.error
+
+  const profileMap = {}
+  for (const p of profilesRes.data || []) {
+    profileMap[p.id] = p.full_name
+  }
+
+  return (tasksRes.data || []).map(t => ({
+    ...t,
+    client_name: t.clients?.name || '—',
+    deal_title: t.deals?.title || '—',
+    assigned_name: profileMap[t.agent_id] || '—',
+    clients: undefined,
+    deals: undefined,
+  }))
 }
 
 async function createTask(body) {
-  const { data, error } = await supabase.from('tasks').insert(body).select().single()
+  const insertBody = { ...body }
+  if (insertBody.assigned_to) {
+    insertBody.agent_id = insertBody.assigned_to
+    delete insertBody.assigned_to
+  }
+  const { data, error } = await supabase.from('tasks').insert(insertBody).select().single()
   if (error) throw error
   await logActivity('task_created', 'task', data.id, { title: data.title })
   return data
 }
 
 async function updateTask(id, body) {
-  const updates = { ...body, updated_at: new Date().toISOString() }
+  const updates = { ...body }
   delete updates.id
+  if (updates.assigned_to) {
+    updates.agent_id = updates.assigned_to
+    delete updates.assigned_to
+  }
 
   const { data, error } = await supabase.from('tasks').update(updates).eq('id', id).select().single()
   if (error) throw error
@@ -413,7 +501,10 @@ async function updateTask(id, body) {
 }
 
 async function listCalls(query) {
-  let q = supabase.from('calls').select('*').order('created_at', { ascending: false })
+  let q = supabase
+    .from('calls')
+    .select('*, clients(name, company_id, companies(name))')
+    .order('created_at', { ascending: false })
 
   const clientId = query.get('client_id')
   const status = query.get('status')
@@ -423,11 +514,26 @@ async function listCalls(query) {
 
   const { data, error } = await q
   if (error) throw error
-  return data
+  return (data || []).map(c => ({
+    ...c,
+    client_name: c.clients?.name || c.prospect_name || '—',
+    company_name: c.clients?.companies?.name || c.company || '—',
+    clients: undefined,
+  }))
 }
 
 async function createCall(body) {
-  const { data: call, error } = await supabase.from('calls').insert(body).select().single()
+  // Preserve deal_id for email queue before stripping from insert payload
+  const dealId = body.deal_id || null
+  const insertBody = { ...body }
+  delete insertBody.deal_id
+  delete insertBody.booked_date
+  delete insertBody.booked_start
+  delete insertBody.booked_end
+  delete insertBody.start_time
+  delete insertBody.end_time
+
+  const { data: call, error } = await supabase.from('calls').insert(insertBody).select().single()
   if (error) throw error
 
   await logActivity('call_created', 'call', call.id, { status: call.status })
@@ -441,14 +547,14 @@ async function createCall(body) {
 
     await queueCallBookingEmail(
       call.client_id,
-      body.deal_id || call.deal_id || null,
+      dealId,
       call.id,
       {
         name: client?.name || call.prospect_name,
         company: client?.companies?.name,
-        date: call.booked_date || call.scheduled_at,
-        startTime: call.booked_start || call.start_time,
-        endTime: call.booked_end || call.end_time,
+        date: call.scheduled_at,
+        startTime: null,
+        endTime: null,
       }
     )
   }
@@ -464,7 +570,7 @@ async function listEmailQueue(query) {
 
   let q = supabase
     .from('email_queue')
-    .select('*', { count: 'exact' })
+    .select('*, clients(name, email)', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range(from, to)
 
@@ -474,7 +580,12 @@ async function listEmailQueue(query) {
   if (error) throw error
 
   return {
-    items: data,
+    items: (data || []).map(item => ({
+      ...item,
+      client_name: item.clients?.name || '—',
+      to: item.clients?.email || '—',
+      clients: undefined,
+    })),
     page,
     perPage: PER_PAGE,
     total: count || 0,

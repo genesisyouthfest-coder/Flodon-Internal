@@ -10,8 +10,8 @@ export default {
   async execute(interaction) {
     const { data: leads, error } = await supabase
       .from('clients')
-      .select('name, brand_name, email, created_at, source')
-      .eq('source', 'website')
+      .select('name, brand_name, email, created_at, lead_source')
+      .eq('lead_source', 'website')
       .order('created_at', { ascending: false })
       .limit(5)
 

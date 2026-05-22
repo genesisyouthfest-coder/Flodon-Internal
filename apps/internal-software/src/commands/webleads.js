@@ -26,8 +26,8 @@ export default {
 
     let query = supabase
       .from('clients')
-      .select('id, name, brand_name, email, phone, pipeline_stage, qualification, booked_date, booked_start, booked_end, created_at')
-      .eq('source', 'website')
+      .select('id, name, brand_name, email, phone, pipeline_stage, qualification, created_at')
+      .eq('lead_source', 'website')
       .order('created_at', { ascending: false })
       .limit(limit)
 
@@ -56,7 +56,7 @@ export default {
       const isHot = q.readyToMoveForward === 'Yes' && q.investmentLevel
       const date  = new Date(lead.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
       const company = lead.brand_name ? ` · ${lead.brand_name}` : ''
-      const callStr = lead.booked_date ? `  📅 Call: ${lead.booked_date} ${lead.booked_start || ''}` : ''
+      const callStr = q.booked_date ? `  📅 Call: ${q.booked_date} ${q.booked_start || ''}` : ''
       const revenueStr = q.monthlyRevenue ? `  💰 ${q.monthlyRevenue}` : ''
       const investStr  = q.investmentLevel ? `  💳 ${q.investmentLevel}` : ''
       const hotTag     = isHot ? '  🔥 **HOT**' : ''

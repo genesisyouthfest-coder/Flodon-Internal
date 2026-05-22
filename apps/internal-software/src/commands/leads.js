@@ -55,12 +55,12 @@ export default {
 
     let query = supabase
       .from('clients')
-      .select('id, name, brand_name, email, pipeline_stage, source, created_at')
+      .select('id, name, brand_name, email, pipeline_stage, lead_source, created_at')
       .order('created_at', { ascending: false })
       .limit(limit)
 
     if (stage  !== 'all') query = query.eq('pipeline_stage', stage)
-    if (source !== 'all') query = query.eq('source', source)
+    if (source !== 'all') query = query.eq('lead_source', source)
 
     const { data: leads, error } = await query
 
@@ -73,7 +73,7 @@ export default {
     }
 
     const lines = leads.map((lead, i) => {
-      const srcEmoji   = SOURCE_EMOJI[lead.source] || '❓'
+      const srcEmoji   = SOURCE_EMOJI[lead.lead_source] || '❓'
       const stageEmoji = STAGE_EMOJI[lead.pipeline_stage] || '•'
       const date       = new Date(lead.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
       const company    = lead.brand_name ? ` (${lead.brand_name})` : ''

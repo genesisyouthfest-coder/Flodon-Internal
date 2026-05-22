@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { readdirSync } from 'fs'
 import http from 'http'
-import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log, handleWebhookEmails, clearEmailConfigCache, processEmailQueue } from '@flodon/core'
+import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log, handleWebhookEmails, handleWebhookDBUpdates, clearEmailConfigCache, processEmailQueue } from '@flodon/core'
 import { getDashboardHTML } from './dashboard.js'
 import { getCRMHTML } from './crmUI.js'
 import { handleCRMRequest } from './crm.js'
@@ -154,7 +154,8 @@ http.createServer(async (req, res) => {
         await channel.send(messageOptions)
         log(`Webhook processed: ${endpoint} -> ${channelId}`)
 
-        // Trigger emails in the background (non-blocking)
+        // Trigger DB updates and emails in the background (non-blocking)
+        handleWebhookDBUpdates(endpoint, payload).catch(err => log(`DB save failed: ${err.message}`, 'error'))
         handleWebhookEmails(endpoint, payload).catch(err => log(`Email trigger failed: ${err.message}`, 'error'))
 
         res.writeHead(200)

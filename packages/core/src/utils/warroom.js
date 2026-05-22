@@ -24,7 +24,7 @@ export async function updateWarRoom(guild) {
     const { data: newDeals } = await supabase
       .from('deals')
       .select('amount_monthly')
-      .gte('created_at', startOfMonth.toISOString())
+      .gte('logged_at', startOfMonth.toISOString())
     const netNew = newDeals?.reduce((s, d) => s + (d.amount_monthly || 0), 0) || 0
 
     // Outreach this month per platform
@@ -56,14 +56,14 @@ export async function updateWarRoom(guild) {
     const { count: webLeadsCount } = await supabase
       .from('clients')
       .select('*', { count: 'exact', head: true })
-      .eq('source', 'website')
+      .eq('lead_source', 'website')
       .gte('created_at', startOfMonth.toISOString())
 
     const hotLeadsCount = await (async () => {
       const { data } = await supabase
         .from('clients')
         .select('qualification')
-        .eq('source', 'website')
+        .eq('lead_source', 'website')
         .gte('created_at', startOfMonth.toISOString())
       return data?.filter(c =>
         c.qualification?.readyToMoveForward === 'Yes' && c.qualification?.investmentLevel
