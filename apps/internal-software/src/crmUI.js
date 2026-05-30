@@ -1037,12 +1037,11 @@ export function getCRMHTML(url) {
     }
 
     window.openAddClientModal = async function() {
-      var companies = await loadCompanies()
       openModal('Add Client',
         '<div class="field-row"><div class="field"><label>Name *</label><input type="text" id="cl-name" /></div>' +
         '<div class="field"><label>Email</label><input type="email" id="cl-email" /></div></div>' +
         '<div class="field-row"><div class="field"><label>Phone</label><input type="text" id="cl-phone" /></div>' +
-        '<div class="field"><label>Company</label><select id="cl-company">' + companyOptions(companies) + '</select></div></div>' +
+        '<div class="field"><label>Company</label><input type="text" id="cl-company" placeholder="Company Name" /></div></div>' +
         '<div class="field-row"><div class="field"><label>Role</label><input type="text" id="cl-role" /></div>' +
         '<div class="field"><label>Industry</label><input type="text" id="cl-industry" /></div></div>' +
         '<div class="field-row"><div class="field"><label>Service</label><input type="text" id="cl-service" /></div>' +
@@ -1061,7 +1060,7 @@ export function getCRMHTML(url) {
             name: document.getElementById('cl-name').value.trim(),
             email: document.getElementById('cl-email').value.trim(),
             phone: document.getElementById('cl-phone').value.trim(),
-            company_id: document.getElementById('cl-company').value || null,
+            company_name: document.getElementById('cl-company').value.trim() || null,
             role: document.getElementById('cl-role').value.trim(),
             industry: document.getElementById('cl-industry').value.trim(),
             service: document.getElementById('cl-service').value.trim(),
@@ -1084,15 +1083,23 @@ export function getCRMHTML(url) {
         var client = clients.find(function(c) { return String(c.id) === String(clientId) })
         if (!client) { showToast('Client not found', 'error'); return }
 
+        var stageOpts = CLIENT_STAGES.map(function(s) {
+          return '<option value="' + s + '"' + (client.pipeline_stage === s ? ' selected' : '') + '>' + s.replace(/_/g, ' ') + '</option>'
+        }).join('')
+        
+        var sourceOpts = ['manual', 'website', 'referral'].map(function(s) {
+          return '<option value="' + s + '"' + ((client.lead_source || client.source || 'manual') === s ? ' selected' : '') + '>' + s + '</option>'
+        }).join('')
+
         openDrawer(client.name,
           '<div class="drawer-section">' +
-          '<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value">' + esc(client.email || '—') + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value">' + esc(client.phone || '—') + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">Company</span><span class="detail-value">' + esc(client.company_name || client.brand_name || '—') + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">Stage</span><span class="detail-value">' + stageBadge(client.pipeline_stage) + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">Source</span><span class="detail-value">' + esc(client.lead_source || client.source || '—') + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">Created</span><span class="detail-value mono">' + fmtDate(client.created_at) + '</span></div>' +
-          (client.notes ? '<div class="detail-row"><span class="detail-label">Notes</span><span class="detail-value">' + esc(client.notes) + '</span></div>' : '') +
+          '<div class="field"><label>Email</label><input type="email" id="edit-client-email" value="' + esc(client.email || '') + '" /></div>' +
+          '<div class="field"><label>Phone</label><input type="text" id="edit-client-phone" value="' + esc(client.phone || '') + '" /></div>' +
+          '<div class="field"><label>Company</label><input type="text" id="edit-client-company" value="' + esc(client.company_name || client.brand_name || '') + '" /></div>' +
+          '<div class="field-row"><div class="field"><label>Stage</label><select id="edit-client-stage">' + stageOpts + '</select></div>' +
+          '<div class="field"><label>Source</label><select id="edit-client-source">' + sourceOpts + '</select></div></div>' +
+          '<div class="field"><label>Notes</label><textarea id="edit-client-notes">' + esc(client.notes || '') + '</textarea></div>' +
+          '<button class="btn btn-accent btn-sm" style="margin-top:12px" onclick="saveClientDetails(' + "'" + client.id + "'" + ')">Save Changes</button>' +
           '</div>' +
           '<div class="drawer-section"><div class="drawer-section-title">Linked Deals</div><div id="client-deals">' + skeletonTable(2) + '</div></div>' +
           '<div class="drawer-section"><div class="drawer-section-title">Tasks</div><div id="client-tasks">' + skeletonTable(2) + '</div></div>' +
@@ -1130,6 +1137,25 @@ export function getCRMHTML(url) {
         document.getElementById('client-activity').innerHTML = activity.length
           ? renderActivityFeed(activity)
           : '<div class="empty-state" style="padding:12px">No activity</div>'
+      } catch (err) { showToast(err.message, 'error') }
+    }
+
+    window.saveClientDetails = async function(clientId) {
+      try {
+        await api('/clients/' + clientId, {
+          method: 'PATCH',
+          body: {
+            email: document.getElementById('edit-client-email').value.trim() || null,
+            phone: document.getElementById('edit-client-phone').value.trim() || null,
+            company_name: document.getElementById('edit-client-company').value.trim() || null,
+            pipeline_stage: document.getElementById('edit-client-stage').value,
+            source: document.getElementById('edit-client-source').value,
+            notes: document.getElementById('edit-client-notes').value.trim() || null
+          }
+        })
+        cachedClients = null
+        showToast('Client details saved')
+        loadClientsTable()
       } catch (err) { showToast(err.message, 'error') }
     }
 

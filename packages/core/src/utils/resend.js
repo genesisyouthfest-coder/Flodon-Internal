@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer'
 import { log } from './logger.js'
+import { sendWhatsAppMessage } from './whatsapp.js'
 
 const SOFTWARE_DASHBOARD_URL = process.env.SOFTWARE_PUBLIC_URL || 'https://internal.flodon.in'
 
@@ -118,42 +119,63 @@ export async function handleWebhookEmails(endpoint, payload) {
   if (endpoint === 'lead') {
     const clientEmail = payload.email
     const clientName = payload.name || 'Valued Client'
+    const phone = payload.phone || payload.phone_number || ''
     const date = payload.date || 'N/A'
     const startTime = payload.startTime || 'N/A'
     const website = payload.website || 'N/A'
-
+    const q = payload.biggestBottleneck ? payload : (payload.qualification || {})
+    
+    // Qualification threshold check
+    const revenue = q.monthlyRevenue || ''
+    // Assuming "< $5k" or similar strings mean unqualified for main pipeline
+    const isUnqualified = revenue.includes('<') || revenue.includes('0-') || revenue.toLowerCase().includes('just starting')
+    
     if (clientEmail) {
-      const clientHtml = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px 20px; color: #1c1917; line-height: 1.6;">
-          <h2 style="font-size: 24px; font-weight: 700; color: #0c0a09; margin-bottom: 20px; letter-spacing: -0.025em;">Your Flodon Strategy Audit is Confirmed</h2>
-          <p style="font-size: 16px; margin-bottom: 20px;">Hi <strong>${clientName}</strong>,</p>
-          <p style="font-size: 16px; margin-bottom: 20px;">Your Discovery Session is officially scheduled. We're looking forward to auditing your workflows and designing an autonomous system tailored to scale your operations.</p>
-          
-          <div style="background-color: #f5f5f4; border: 1px solid #e7e5e4; padding: 20px; border-radius: 8px; margin: 25px 0;">
-            <h3 style="margin-top: 0; font-size: 16px; font-weight: 600; color: #44403c; margin-bottom: 15px;">Session Details:</h3>
-            <p style="margin: 6px 0; font-size: 15px;">🗓️ <strong>Date:</strong> ${date}</p>
-            <p style="margin: 6px 0; font-size: 15px;">🕒 <strong>Time:</strong> ${startTime} IST</p>
-            <p style="margin: 6px 0; font-size: 15px;">📍 <strong>Platform:</strong> Google Meet (Link attached to your calendar invite)</p>
+      if (isUnqualified) {
+        // Auto-Cancel & Down-sell / Referral
+        const downsellHtml = `
+          <div style="font-family: sans-serif; max-width: 600px; padding: 20px;">
+            <h2>Strategy Session Update</h2>
+            <p>Hi <strong>${clientName}</strong>,</p>
+            <p>Thank you for applying. Based on your current revenue stage, our core systems package might not be the most cost-effective fit right now.</p>
+            <p>However, we have an exclusive low-ticket workshop designed exactly for your stage to help you scale up to the threshold, or we can refer you to a trusted partner agency.</p>
+            <p><a href="https://flodon.in/workshop">Check out the Workshop here</a></p>
+            <p>We've cancelled the current call to respect your time, but we will keep you updated with valuable resources in our weekly newsletter!</p>
           </div>
-          
-          <h3 style="font-size: 16px; font-weight: 600; color: #0c0a09; margin-top: 25px; margin-bottom: 10px;">⚠️ Action Required Before Our Call:</h3>
-          <p style="font-size: 15px; margin-bottom: 20px;">Please watch this brief overview of how we engineer operations before our call to ensure we make the most of our session:</p>
-          <p style="margin: 25px 0;">
-            <a href="https://flodon.in/book-a-call/confirmed?name=${encodeURIComponent(clientName)}" style="background-color: #0c0a09; color: #fafaf9; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; display: inline-block;">Watch System Overview</a>
-          </p>
-          
-          <h3 style="font-size: 16px; font-weight: 600; color: #0c0a09; margin-top: 25px; margin-bottom: 10px;">💡 Preparation Checklist:</h3>
-          <ul style="padding-left: 20px; margin-bottom: 30px; font-size: 15px;">
-            <li style="margin-bottom: 8px;">Join from a desktop or laptop computer (we will be reviewing system schemas).</li>
-            <li style="margin-bottom: 8px;">Ensure you are in a quiet workspace.</li>
-            <li style="margin-bottom: 8px;">Have details regarding your primary CRM and operational bottlenecks ready.</li>
-          </ul>
-          
-          <hr style="border: 0; border-top: 1px solid #e7e5e4; margin: 30px 0;" />
-          <p style="font-size: 12px; color: #78716c; margin-bottom: 0;">Need to reschedule or cancel? Use the cancellation link in your Google Calendar invite.</p>
-        </div>
-      `
-      await sendEmail({ to: clientEmail, subject: `🚀 Flodon Session Confirmed | ${clientName}`, html: clientHtml })
+        `
+        await sendEmail({ to: clientEmail, subject: `Flodon Strategy Session Update`, html: downsellHtml })
+        
+        if (phone) {
+          await sendWhatsAppMessage({ 
+            to: phone, 
+            body: `Hi ${clientName}, thank you for booking! Based on your application, our core service isn't the best fit yet. We've cancelled the call, but check your email for a special workshop invite designed for your stage!` 
+          })
+        }
+      } else {
+        // Qualified -> Confirmation Link
+        const confirmUrl = `${SOFTWARE_DASHBOARD_URL}/api/confirm?email=${encodeURIComponent(clientEmail)}`
+        const clientHtml = `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px 20px; color: #1c1917; line-height: 1.6;">
+            <h2 style="font-size: 24px; font-weight: 700; color: #0c0a09; margin-bottom: 20px;">Please Confirm Your Strategy Audit</h2>
+            <p style="font-size: 16px; margin-bottom: 20px;">Hi <strong>${clientName}</strong>,</p>
+            <p style="font-size: 16px; margin-bottom: 20px;">Your Discovery Session is tentatively scheduled for ${date} at ${startTime} IST.</p>
+            
+            <h3 style="font-size: 16px; font-weight: 600; color: #0c0a09; margin-top: 25px; margin-bottom: 10px;">⚠️ Action Required:</h3>
+            <p style="font-size: 15px; margin-bottom: 20px;">Please click the button below to confirm your attendance. Unconfirmed calls will be auto-cancelled.</p>
+            <p style="margin: 25px 0;">
+              <a href="${confirmUrl}" style="background-color: #0c0a09; color: #fafaf9; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; display: inline-block;">Confirm My Call</a>
+            </p>
+          </div>
+        `
+        await sendEmail({ to: clientEmail, subject: `Action Required: Confirm Flodon Session | ${clientName}`, html: clientHtml })
+        
+        if (phone) {
+          await sendWhatsAppMessage({ 
+            to: phone, 
+            body: `Hi ${clientName}, your Flodon strategy session on ${date} is on hold. Please confirm your attendance here: ${confirmUrl}` 
+          })
+        }
+      }
     }
 
     if (adminEmail) {
@@ -265,6 +287,11 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
       return { success: false, error: 'Email is required' }
     }
 
+    const revenue = q.monthlyRevenue || ''
+    const isUnqualified = revenue.includes('<') || revenue.includes('0-') || revenue.toLowerCase().includes('just starting')
+    const initialStage = isUnqualified ? 'nurture' : 'call_booked'
+    const isNurture = isUnqualified
+
     // 1. Check if client exists
     const { data: existingClient } = await supabase
       .from('clients')
@@ -281,7 +308,8 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
           name,
           phone,
           source_url: website,
-          pipeline_stage: 'call_booked',
+          pipeline_stage: initialStage,
+          is_nurture: isNurture,
           qualification,
           notes: q.biggestBottleneck || null
         })
@@ -314,7 +342,8 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
           email,
           phone,
           source_url: website,
-          pipeline_stage: 'call_booked',
+          pipeline_stage: initialStage,
+          is_nurture: isNurture,
           lead_source: q.leadSources || q.leadSource || 'website',
           qualification,
           notes: q.biggestBottleneck || null,
@@ -438,6 +467,87 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
   }
 
   return { success: false, error: 'Invalid endpoint' }
+}
+
+export async function sendRebookingEmail(clientEmail, phone, clientName) {
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; padding: 20px;">
+      <h2>Rebook Your Strategy Session</h2>
+      <p>Hi <strong>${clientName}</strong>,</p>
+      <p>We saw that you cancelled your upcoming Flodon Discovery Session.</p>
+      <p>If this was just a scheduling conflict, we'd love to find a better time for you.</p>
+      <p><a href="https://flodon.in/book-a-call">Click here to rebook your session</a></p>
+    </div>
+  `
+  await sendEmail({ to: clientEmail, subject: `Rebook your Flodon Strategy Session`, html })
+  
+  if (phone) {
+    await sendWhatsAppMessage({ 
+      to: phone, 
+      body: `Hi ${clientName}, saw you had to cancel our session. If you're still interested, let's find a better time: https://flodon.in/book-a-call` 
+    })
+  }
+}
+
+export async function sendNoShowEmail(clientEmail, phone, clientName) {
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; padding: 20px;">
+      <h2>Missed You on the Call</h2>
+      <p>Hi <strong>${clientName}</strong>,</p>
+      <p>We missed you on our scheduled strategy session today.</p>
+      <p>If you'd like to reschedule, you can do so here:</p>
+      <p><a href="https://flodon.in/book-a-call">Reschedule your session</a></p>
+    </div>
+  `
+  await sendEmail({ to: clientEmail, subject: `Missed You - Flodon Strategy Session`, html })
+  
+  if (phone) {
+    await sendWhatsAppMessage({ 
+      to: phone, 
+      body: `Hi ${clientName}, looks like we missed each other today. Let me know if you want to reschedule: https://flodon.in/book-a-call` 
+    })
+  }
+}
+
+export async function sendLongTermNurtureEmail(clientEmail, phone, clientName) {
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; padding: 20px;">
+      <h2>System Architectures that Scale</h2>
+      <p>Hi <strong>${clientName}</strong>,</p>
+      <p>This week, we're looking at how top agencies automate their client onboarding flows using webhooks and custom CRMs, cutting out 15+ hours of manual work per week.</p>
+      <p>Check out our latest deep dive here:</p>
+      <p><a href="https://flodon.in/blog">Read the full breakdown</a></p>
+      <p>Whenever you're ready to implement this in your business, we're here.</p>
+    </div>
+  `
+  await sendEmail({ to: clientEmail, subject: `Scale your agency with this workflow`, html })
+  
+  if (phone) {
+    await sendWhatsAppMessage({ 
+      to: phone, 
+      body: `Hi ${clientName}, new value drop from Flodon! We just broke down how top agencies automate onboarding. Check it out: https://flodon.in/blog` 
+    })
+  }
+}
+
+export async function sendOnboardingEmail(clientEmail, phone, clientName, dealTitle) {
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; padding: 20px;">
+      <h2>Welcome to Flodon!</h2>
+      <p>Hi <strong>${clientName}</strong>,</p>
+      <p>We're thrilled to partner with you on <strong>${dealTitle}</strong>.</p>
+      <p>Your dedicated slack channel has been set up, and we'll be kicking off your 30-Day Rolling Retainer immediately.</p>
+      <p>Let's build something incredible together.</p>
+    </div>
+  `
+  await sendEmail({ to: clientEmail, subject: `Welcome to Flodon!`, html })
+  
+  if (phone) {
+    await sendWhatsAppMessage({ 
+      to: phone, 
+      body: `Welcome to Flodon, ${clientName}! We're thrilled to start building ${dealTitle}. Check your email for next steps!` 
+    })
+  }
 }
 
 

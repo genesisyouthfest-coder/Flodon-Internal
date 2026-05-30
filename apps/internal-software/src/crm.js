@@ -142,6 +142,13 @@ async function listClients(query) {
     .order('created_at', { ascending: false })
     .range(from, to)
 
+  const isNurture = query.get('nurture')
+  if (isNurture === 'true') {
+    q = q.eq('is_nurture', true)
+  } else if (isNurture === 'false') {
+    q = q.eq('is_nurture', false)
+  }
+
   if (stage) q = q.eq('pipeline_stage', stage)
 
   if (search) {
@@ -173,14 +180,42 @@ async function listClients(query) {
   }
 }
 
-async function createClient(body) {
-  const { name, email, phone, company_id, role, industry, source, notes, service } = body
+async function resolveOrCreateCompany(body) {
+  // If a company_id UUID was passed directly, use it
+  if (body.company_id) return body.company_id
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name')
-    .eq('id', ADMIN_PROFILE_ID)
+  // Accept company_name or brand_name as a string to find-or-create
+  const companyName = (body.company_name || body.brand_name || '').trim()
+  if (!companyName) return null
+
+  // Check if a company with this name already exists (case-insensitive)
+  const { data: existing } = await supabase
+    .from('companies')
+    .select('id')
+    .ilike('name', companyName)
     .maybeSingle()
+
+  if (existing) return existing.id
+
+  // Auto-create the company
+  const { data: newCompany, error } = await supabase
+    .from('companies')
+    .insert({ name: companyName, industry: body.industry || null })
+    .select('id')
+    .single()
+
+  if (error) throw error
+  await logActivity('company_created', 'company', newCompany.id, { name: companyName, auto: true })
+  return newCompany.id
+}
+
+async function createClient(body) {
+  const { name, email, phone, role, industry, source, notes, service } = body
+
+  const [{ data: profile }, resolvedCompanyId] = await Promise.all([
+    supabase.from('profiles').select('full_name').eq('id', ADMIN_PROFILE_ID).maybeSingle(),
+    resolveOrCreateCompany(body),
+  ])
 
   const addedByName = profile?.full_name || 'CRM Admin'
 
@@ -190,7 +225,8 @@ async function createClient(body) {
       name,
       email,
       phone,
-      company_id: company_id || null,
+      company_id: resolvedCompanyId,
+      brand_name: body.company_name || body.brand_name || null,
       role,
       industry,
       lead_source: source || 'manual',
@@ -204,7 +240,7 @@ async function createClient(body) {
 
   if (error) throw error
 
-  const companyName = client.companies?.name || await resolveCompanyName(company_id)
+  const companyName = client.companies?.name || await resolveCompanyName(resolvedCompanyId)
 
   if (source === 'manual') {
     await queueOutreachEmail(client.id, null, {
@@ -237,7 +273,7 @@ async function updateClient(id, body) {
   if (fetchError) throw fetchError
   if (!existing) throw new Error('Client not found')
 
-  const allowed = ['name', 'email', 'phone', 'company_id', 'role', 'industry', 'source', 'notes', 'service', 'pipeline_stage']
+  const allowed = ['name', 'email', 'phone', 'company_id', 'role', 'industry', 'source', 'notes', 'service', 'pipeline_stage', 'ai_confirmed', 'is_nurture']
   const updates = {}
   for (const key of allowed) {
     if (body[key] !== undefined) {
@@ -247,6 +283,11 @@ async function updateClient(id, body) {
         updates[key] = body[key]
       }
     }
+  }
+
+  if (body.company_name !== undefined || body.brand_name !== undefined) {
+    updates.company_id = await resolveOrCreateCompany(body)
+    updates.brand_name = body.company_name || body.brand_name || null
   }
 
   const { data: client, error } = await supabase
@@ -274,6 +315,16 @@ async function updateClient(id, body) {
       date: call?.scheduled_at,
       startTime: null,
       endTime: null,
+    })
+  }
+
+  // Trigger Human Call-Up if AI Confirmation fails
+  if (body.ai_confirmed === false && existing.ai_confirmed !== false) {
+    await supabase.from('tasks').insert({
+      title: `Human Call-Up for ${client.name}`,
+      status: 'pending',
+      client_id: id,
+      assigned_to: ADMIN_PROFILE_ID
     })
   }
 
@@ -373,6 +424,32 @@ async function updateDeal(id, body) {
 
   if (body.stage !== undefined && body.stage !== existing.stage) {
     await logActivity('stage_changed', 'deal', id, { from: existing.stage, to: body.stage })
+
+    if (body.stage === 'closed_won') {
+      // Trigger Onboarding tasks automatically
+      const now = new Date()
+      const in30Days = new Date()
+      in30Days.setDate(in30Days.getDate() + 30)
+      
+      await supabase.from('tasks').insert([
+        {
+          title: `Delivery Handoff: ${deal.title}`,
+          status: 'pending',
+          deal_id: id,
+          client_id: deal.client_id,
+          deadline: new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days from now
+          assigned_to: ADMIN_PROFILE_ID
+        },
+        {
+          title: `30-Day Check-in: ${deal.title}`,
+          status: 'pending',
+          deal_id: id,
+          client_id: deal.client_id,
+          deadline: in30Days.toISOString(),
+          assigned_to: ADMIN_PROFILE_ID
+        }
+      ])
+    }
   }
 
   return {
@@ -656,6 +733,17 @@ export async function handleCRMRequest(req, res, url, method, body) {
 
     // GET /crm/api/clients
     if (method === 'GET' && pathname === '/crm/api/clients') {
+      // By default, exclude nurture leads from the main list unless explicitly requested
+      if (!query.has('nurture')) {
+        query.set('nurture', 'false')
+      }
+      const data = await listClients(query)
+      return json(res, 200, { success: true, data })
+    }
+
+    // GET /crm/api/nurture-list
+    if (method === 'GET' && pathname === '/crm/api/nurture-list') {
+      query.set('nurture', 'true')
       const data = await listClients(query)
       return json(res, 200, { success: true, data })
     }

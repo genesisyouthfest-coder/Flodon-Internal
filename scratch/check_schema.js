@@ -11,8 +11,8 @@ async function getOpenApiSpec() {
   })
   const spec = await res.json()
   
-  console.log("Client Definition:")
-  console.log(JSON.stringify(spec.definitions.clients, null, 2))
+  console.log("Settings Definition:")
+  console.log(JSON.stringify(spec.definitions.settings, null, 2))
 }
 
 getOpenApiSpec()
