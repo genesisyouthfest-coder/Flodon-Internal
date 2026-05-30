@@ -908,6 +908,24 @@ export async function handleCRMRequest(req, res, url, method, body) {
       return json(res, 200, { success: true, data })
     }
 
+    // GET /crm/api/settings
+    if (method === 'GET' && pathname === '/crm/api/settings') {
+      const { data, error } = await supabase.from('settings').select('key, value')
+      if (error) throw error
+      const map = {}
+      for (const row of data || []) map[row.key] = row.value
+      return json(res, 200, { success: true, settings: map, data: map })
+    }
+
+    // POST /crm/api/settings
+    if (method === 'POST' && pathname === '/crm/api/settings') {
+      for (const [key, value] of Object.entries(body || {})) {
+        const { error } = await supabase.from('settings').upsert({ key, value: String(value) }, { onConflict: 'key' })
+        if (error) throw error
+      }
+      return json(res, 200, { success: true })
+    }
+
     json(res, 404, { success: false, error: 'Not found' })
     return true
   } catch (err) {

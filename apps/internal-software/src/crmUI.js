@@ -650,7 +650,7 @@ export function getCRMHTML(url) {
               '<td>' + (c.email ? esc(c.email) : '—') + '</td>' +
               '<td>' + (c.company_name ? esc(c.company_name) : '—') + '</td>' +
               '<td>' + stageBadge(c.pipeline_stage) + '</td>' +
-              '<td><button class="btn btn-sm btn-accent" onclick="triggerNurture(\'' + c.id + '\', \'email\')">Send Email</button></td>' +
+              '<td><button class="btn btn-sm btn-accent" onclick="triggerNurture(' + "'" + c.id + "'" + ', ' + "'email'" + ')">Send Email</button></td>' +
               '</tr>'
           }).join('')
         }
