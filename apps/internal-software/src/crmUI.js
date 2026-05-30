@@ -551,7 +551,9 @@ export function getCRMHTML(url) {
         <a href="#deals" data-route="deals">Deals</a>
         <a href="#calls" data-route="calls">Calls</a>
         <a href="#tasks" data-route="tasks">Tasks</a>
+        <a href="#nurture" data-route="nurture">Nurture List</a>
         <a href="#email-queue" data-route="email-queue">Email Queue</a>
+        <a href="#settings" data-route="settings">Settings</a>
       </nav>
     </aside>
 
@@ -597,7 +599,9 @@ export function getCRMHTML(url) {
       deals: renderDeals,
       calls: renderCalls,
       tasks: renderTasks,
-      'email-queue': renderEmailQueue
+      nurture: renderNurture,
+      'email-queue': renderEmailQueue,
+      settings: renderSettings
     }
 
     function navigate() {
@@ -612,6 +616,98 @@ export function getCRMHTML(url) {
 
     window.addEventListener('hashchange', navigate)
     navigate()
+
+    // ─── Nurture & Settings ───
+    async function triggerNurture(clientId, type) {
+      if (!confirm('Are you sure you want to send a nurture ' + type + '?')) return
+      try {
+        await api('/nurture/trigger', { method: 'POST', body: { client_id: clientId, type: type } })
+        showToast('Nurture ' + type + ' sent successfully')
+      } catch (err) {
+        showToast(err.message, 'error')
+      }
+    }
+
+    async function renderNurture() {
+      var el = document.getElementById('main-content')
+      el.innerHTML = pageHeader('Nurture List', 'Clients marked for long-term nurturing') + skeletonTable(10)
+      
+      try {
+        var res = await api('/nurture-list')
+        var clients = res.data.clients || res.data || []
+        
+        var html = pageHeader('Nurture List', 'Clients marked for long-term nurturing') +
+          '<div class="card table-wrap"><table class="data-table"><thead><tr>' +
+          '<th>Name</th><th>Email</th><th>Company</th><th>Stage</th><th>Actions</th>' +
+          '</tr></thead><tbody>'
+        
+        if (!clients.length) {
+          html += '<tr class="no-click"><td colspan="5" class="empty-state">No clients in nurture list</td></tr>'
+        } else {
+          html += clients.map(function(c) {
+            return '<tr class="no-click">' +
+              '<td><strong>' + esc(c.name) + '</strong></td>' +
+              '<td>' + (c.email ? esc(c.email) : '—') + '</td>' +
+              '<td>' + (c.company_name ? esc(c.company_name) : '—') + '</td>' +
+              '<td>' + stageBadge(c.pipeline_stage) + '</td>' +
+              '<td><button class="btn btn-sm btn-accent" onclick="triggerNurture(\'' + c.id + '\', \'email\')">Send Email</button></td>' +
+              '</tr>'
+          }).join('')
+        }
+        html += '</tbody></table></div>'
+        el.innerHTML = html
+      } catch (err) {
+        el.innerHTML = pageHeader('Nurture List', '') + '<div class="card empty-state">Error: ' + err.message + '</div>'
+      }
+    }
+
+    async function renderSettings() {
+      var el = document.getElementById('main-content')
+      el.innerHTML = pageHeader('Settings', 'Configure API keys and integrations') + skeletonTable(5)
+      
+      try {
+        var res = await api('/settings/keys')
+        var keys = res.data || {}
+        
+        var html = pageHeader('Settings', 'Configure API keys and integrations', 
+          '<button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>') +
+          '<div class="card" style="max-width: 600px;">' +
+          '<div class="card-title">Email Integration</div>' +
+          '<div class="field"><label>Resend API Key</label><input type="password" id="set-resend-api" value="' + esc(keys.resend_api_key) + '" placeholder="re_..." /></div>' +
+          '<hr style="border: 0; border-top: 1px solid #27272a; margin: 24px 0;" />' +
+          '<div class="card-title" style="margin-bottom: 8px;">Gmail SMTP (Fallback)</div>' +
+          '<div class="field"><label>Gmail User</label><input type="email" id="set-gmail-user" value="' + esc(keys.gmail_user) + '" placeholder="hello@flodon.in" /></div>' +
+          '<div class="field"><label>Gmail App Password</label><input type="password" id="set-gmail-pass" value="' + esc(keys.gmail_app_password) + '" placeholder="16-digit app password" /></div>' +
+          '<div class="field"><label>From Name</label><input type="text" id="set-gmail-name" value="' + esc(keys.gmail_from_name) + '" placeholder="Flodon Operations" /></div>' +
+          '</div>'
+          
+        el.innerHTML = html
+      } catch (err) {
+        el.innerHTML = pageHeader('Settings', '') + '<div class="card empty-state">Error: ' + err.message + '</div>'
+      }
+    }
+
+    window.saveSettings = async function() {
+      var body = {
+        resend_api_key: document.getElementById('set-resend-api').value,
+        gmail_user: document.getElementById('set-gmail-user').value,
+        gmail_app_password: document.getElementById('set-gmail-pass').value,
+        gmail_from_name: document.getElementById('set-gmail-name').value
+      }
+      
+      try {
+        var btn = document.querySelector('.page-header .btn-primary')
+        btn.disabled = true
+        btn.textContent = 'Saving...'
+        await api('/settings/keys', { method: 'POST', body: body })
+        showToast('Settings saved successfully')
+      } catch (err) {
+        showToast(err.message, 'error')
+      } finally {
+        var btn = document.querySelector('.page-header .btn-primary')
+        if (btn) { btn.disabled = false; btn.textContent = 'Save Changes' }
+      }
+    }
 
     // ─── API Helper ───
     async function api(path, opts) {

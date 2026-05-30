@@ -683,30 +683,33 @@ async function retryEmailQueue(id) {
   return data
 }
 
-async function getCrmSettings() {
+async function getSettingsKeys() {
   const { data, error } = await supabase
     .from('settings')
     .select('key, value')
-    .in('key', ['email_queue_min_delay_minutes', 'email_queue_max_delay_minutes'])
+    .in('key', ['resend_api_key', 'gmail_user', 'gmail_app_password', 'gmail_from_name'])
 
   if (error) throw error
 
   const map = {}
-  for (const row of data || []) map[row.key] = row.value
+  for (const row of data || []) map[row.key] = row.value || ''
 
   return {
-    email_queue_min_delay_minutes: parseInt(map.email_queue_min_delay_minutes, 10) || 5,
-    email_queue_max_delay_minutes: parseInt(map.email_queue_max_delay_minutes, 10) || 45,
+    resend_api_key: map.resend_api_key || '',
+    gmail_user: map.gmail_user || '',
+    gmail_app_password: map.gmail_app_password || '',
+    gmail_from_name: map.gmail_from_name || '',
   }
 }
 
-async function updateCrmSettings(body) {
+async function updateSettingsKeys(body) {
+  const allowedKeys = ['resend_api_key', 'gmail_user', 'gmail_app_password', 'gmail_from_name']
   const entries = []
-  if (body.email_queue_min_delay_minutes !== undefined) {
-    entries.push(['email_queue_min_delay_minutes', String(body.email_queue_min_delay_minutes)])
-  }
-  if (body.email_queue_max_delay_minutes !== undefined) {
-    entries.push(['email_queue_max_delay_minutes', String(body.email_queue_max_delay_minutes)])
+  
+  for (const key of allowedKeys) {
+    if (body[key] !== undefined) {
+      entries.push([key, String(body[key]).trim()])
+    }
   }
 
   for (const [key, value] of entries) {
@@ -716,7 +719,41 @@ async function updateCrmSettings(body) {
     if (error) throw error
   }
 
-  return getCrmSettings()
+  // Clear caches in resend.js dynamically to pick up new DB config
+  try {
+    const { clearEmailConfigCache } = await import('@flodon/core/utils/resend.js')
+    if (clearEmailConfigCache) clearEmailConfigCache()
+    const { clearResendConfigCache } = await import('@flodon/core/lib/resend.js')
+    if (clearResendConfigCache) clearResendConfigCache()
+  } catch(e) {
+    // Ignore if not present
+  }
+
+  return getSettingsKeys()
+}
+
+async function triggerNurtureAction(clientId, type) {
+  const { data: client, error } = await supabase
+    .from('clients')
+    .select('name, email, phone')
+    .eq('id', clientId)
+    .single()
+    
+  if (error) throw error
+  
+  if (type === 'email') {
+    if (!client.email) throw new Error('Client has no email')
+    const { sendLongTermNurtureEmail } = await import('@flodon/core/utils/resend.js')
+    // sendLongTermNurtureEmail also triggers whatsapp inside if phone is present,
+    // but the user said they don't want whatsapp stuff right now. 
+    // We can just call it (it handles whatsapp natively if it exists, though they might not configure twilio).
+    await sendLongTermNurtureEmail(client.email, null, client.name) // Passing null for phone so no WhatsApp is sent
+    await logActivity('nurture_email_sent', 'client', clientId, { email: client.email })
+  } else {
+    throw new Error('Unsupported nurture action')
+  }
+  
+  return { success: true }
 }
 
 export async function handleCRMRequest(req, res, url, method, body) {
@@ -850,15 +887,24 @@ export async function handleCRMRequest(req, res, url, method, body) {
       }
     }
 
-    // GET /crm/api/settings
-    if (method === 'GET' && pathname === '/crm/api/settings') {
-      const data = await getCrmSettings()
+    // GET /crm/api/settings/keys
+    if (method === 'GET' && pathname === '/crm/api/settings/keys') {
+      const data = await getSettingsKeys()
       return json(res, 200, { success: true, data })
     }
 
-    // POST /crm/api/settings
-    if (method === 'POST' && pathname === '/crm/api/settings') {
-      const data = await updateCrmSettings(body || {})
+    // POST /crm/api/settings/keys
+    if (method === 'POST' && pathname === '/crm/api/settings/keys') {
+      const data = await updateSettingsKeys(body || {})
+      return json(res, 200, { success: true, data })
+    }
+
+    // POST /crm/api/nurture/trigger
+    if (method === 'POST' && pathname === '/crm/api/nurture/trigger') {
+      if (!body.client_id || !body.type) {
+         return json(res, 400, { success: false, error: 'client_id and type are required' })
+      }
+      const data = await triggerNurtureAction(body.client_id, body.type)
       return json(res, 200, { success: true, data })
     }
 
