@@ -268,6 +268,7 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
   const email = payload.email
   const phone = payload.phone || payload.phone_number || 'N/A'
   const website = payload.website || q.website || payload.source_url || 'N/A'
+  const company = payload.company || q.company || q.brandName || q.brand_name || null
 
   const date = payload.date || payload.booked_date || 'N/A'
   const start = payload.startTime || payload.booked_start || payload.start_time || 'N/A'
@@ -310,6 +311,8 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
           source_url: website,
           pipeline_stage: initialStage,
           is_nurture: isNurture,
+          lead_source: q.leadSources || q.leadSource || 'website',
+          ...(company ? { brand_name: company } : {}),
           qualification,
           notes: q.biggestBottleneck || null
         })
@@ -345,6 +348,7 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
           pipeline_stage: initialStage,
           is_nurture: isNurture,
           lead_source: q.leadSources || q.leadSource || 'website',
+          brand_name: company || null,
           qualification,
           notes: q.biggestBottleneck || null,
           added_by: adminId,
