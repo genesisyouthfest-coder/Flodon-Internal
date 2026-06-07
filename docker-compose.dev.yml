@@ -1,6 +1,4 @@
 # Local PC testing — open http://localhost:3000
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build internal-software discord-bot
-
 services:
   internal-software:
     ports:

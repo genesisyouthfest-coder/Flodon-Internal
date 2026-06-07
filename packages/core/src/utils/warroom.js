@@ -24,7 +24,7 @@ export async function updateWarRoom(guild) {
     const { data: newDeals } = await supabase
       .from('deals')
       .select('amount_monthly')
-      .gte('logged_at', startOfMonth.toISOString())
+      .gte('created_at', startOfMonth.toISOString())
     const netNew = newDeals?.reduce((s, d) => s + (d.amount_monthly || 0), 0) || 0
 
     // Outreach this month per platform

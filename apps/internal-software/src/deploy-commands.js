@@ -14,9 +14,9 @@ for (const file of commandFiles) {
   commands.push(command.default.data.toJSON())
 }
 
-const rest = new REST().setToken(process.env.DISCORD_TOKEN);
+const rest = new REST().setToken(process.env.DISCORD_TOKEN)
 
-(async () => {
+;(async () => {
   try {
     console.log(`\n🔄 Registering ${commands.length} slash commands to guild ${process.env.DISCORD_GUILD_ID}...`)
 
@@ -28,6 +28,6 @@ const rest = new REST().setToken(process.env.DISCORD_TOKEN);
     console.log(`✅ Successfully registered ${data.length} commands!\n`)
     data.forEach(cmd => console.log(`   /${cmd.name} — ${cmd.description}`))
   } catch (error) {
-    console.error('❌ Error registering commands:', error)
+    console.error('Error registering commands:', error)
   }
 })()

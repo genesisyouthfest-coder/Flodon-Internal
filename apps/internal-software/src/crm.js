@@ -1,4 +1,15 @@
-import { supabase, queueOutreachEmail, queueCallBookingEmail } from '@flodon/core'
+import {
+  supabase, queueOutreachEmail, queueCallBookingEmail,
+  listProjects, getProject, createProject, updateProject, deleteProject,
+  listMilestones, createMilestone, updateMilestone, deleteMilestone,
+  listClientMessages, replyToClientMessage,
+  listClientDocuments, createClientDocument,
+  listPortalClients, getPortalDashboard,
+  listTimeEntries, createTimeEntry, updateTimeEntry, deleteTimeEntry,
+  startTimer, pauseTimer, resumeTimer, stopTimer,
+  getActiveTimer, listActiveTimers,
+  getTimeReport, getWeeklyReport,
+} from '@flodon/core'
 
 const ADMIN_PROFILE_ID = process.env.CRM_ADMIN_PROFILE_ID || '00000000-0000-0000-0000-000000000001'
 const PER_PAGE = 20
@@ -924,6 +935,155 @@ export async function handleCRMRequest(req, res, url, method, body) {
         if (error) throw error
       }
       return json(res, 200, { success: true })
+    }
+
+    // ─── Projects (CRM admin) ───
+    if (method === 'GET' && pathname === '/crm/api/projects') {
+      const data = await listProjects(query)
+      return json(res, 200, { success: true, ...data })
+    }
+
+    if (method === 'POST' && pathname === '/crm/api/projects') {
+      const data = await createProject(body)
+      return json(res, 201, { success: true, data })
+    }
+
+    {
+      const params = matchRoute(pathname, '/crm/api/projects/:id')
+      if (method === 'GET' && params) {
+        const data = await getProject(params.id)
+        return data ? json(res, 200, { success: true, data }) : json(res, 404, { success: false, error: 'Not found' })
+      }
+      if (method === 'PATCH' && params) {
+        const data = await updateProject(params.id, body)
+        return json(res, 200, { success: true, data })
+      }
+      if (method === 'DELETE' && params) {
+        const data = await deleteProject(params.id)
+        return json(res, 200, { success: true, data })
+      }
+    }
+
+    // ─── Project Milestones ───
+    {
+      const params = matchRoute(pathname, '/crm/api/projects/:id/milestones')
+      if (method === 'GET' && params) {
+        const data = await listMilestones(params.id)
+        return json(res, 200, { success: true, data })
+      }
+      if (method === 'POST' && params) {
+        const data = await createMilestone({ ...body, project_id: params.id })
+        return json(res, 201, { success: true, data })
+      }
+    }
+
+    {
+      const params = matchRoute(pathname, '/crm/api/milestones/:id')
+      if (method === 'PATCH' && params) {
+        const data = await updateMilestone(params.id, body)
+        return json(res, 200, { success: true, data })
+      }
+      if (method === 'DELETE' && params) {
+        const data = await deleteMilestone(params.id)
+        return json(res, 200, { success: true, data })
+      }
+    }
+
+    // ─── Time Tracking (CRM routes) ───
+    if (method === 'GET' && pathname === '/crm/api/time/entries') {
+      const data = await listTimeEntries({
+        team_member: query.get('team_member'), client_id: query.get('client_id'),
+        project_id: query.get('project_id'),
+        date_from: query.get('date_from'), date_to: query.get('date_to'),
+        page: parseInt(query.get('page') || '1'), limit: parseInt(query.get('limit') || '50'),
+      })
+      return json(res, 200, { success: true, ...data })
+    }
+
+    if (method === 'POST' && pathname === '/crm/api/time/entries') {
+      const data = await createTimeEntry(body)
+      return json(res, 201, { success: true, data })
+    }
+
+    {
+      const params = matchRoute(pathname, '/crm/api/time/entries/:id')
+      if (method === 'PATCH' && params) {
+        const data = await updateTimeEntry(params.id, body)
+        return json(res, 200, { success: true, data })
+      }
+      if (method === 'DELETE' && params) {
+        const data = await deleteTimeEntry(params.id)
+        return json(res, 200, { success: true, data })
+      }
+    }
+
+    if (method === 'POST' && pathname === '/crm/api/time/timer/start') {
+      const data = await startTimer(body)
+      return json(res, 201, { success: true, data })
+    }
+
+    if (method === 'POST' && pathname.startsWith('/crm/api/time/timer/')) {
+      const parts = pathname.split('/')
+      const action = parts[5]
+      const id = parts.length > 6 ? parts[6] : body?.id
+      if (!id) return json(res, 400, { success: false, error: 'Timer ID required' })
+      let data
+      if (action === 'pause') data = await pauseTimer(id)
+      else if (action === 'resume') data = await resumeTimer(id)
+      else if (action === 'stop') data = await stopTimer(id)
+      else return json(res, 400, { success: false, error: 'Invalid action' })
+      return json(res, 200, { success: true, data })
+    }
+
+    if (method === 'GET' && pathname === '/crm/api/time/timer/active') {
+      const teamMember = query.get('team_member')
+      const data = teamMember ? await getActiveTimer(teamMember) : await listActiveTimers()
+      return json(res, 200, { success: true, data })
+    }
+
+    if (method === 'GET' && pathname === '/crm/api/time/report') {
+      const data = await getTimeReport({
+        team_member: query.get('team_member'), client_id: query.get('client_id'),
+        project_id: query.get('project_id'), date_from: query.get('date_from'), date_to: query.get('date_to'),
+      })
+      return json(res, 200, { success: true, data })
+    }
+
+    if (method === 'GET' && pathname === '/crm/api/time/weekly') {
+      const data = await getWeeklyReport({ week_start: query.get('week_start'), team_member: query.get('team_member') })
+      return json(res, 200, { success: true, data })
+    }
+
+    // ─── Portal Admin (CRM manages client portal) ───
+    if (method === 'GET' && pathname === '/crm/api/portal/clients') {
+      const data = await listPortalClients()
+      return json(res, 200, { success: true, data })
+    }
+
+    if (method === 'GET' && pathname === '/crm/api/portal/messages') {
+      const clientId = query.get('client_id')
+      if (!clientId) return json(res, 400, { success: false, error: 'client_id required' })
+      const data = await listClientMessages(clientId)
+      return json(res, 200, { success: true, data })
+    }
+
+    if (method === 'POST' && pathname === '/crm/api/portal/reply') {
+      if (!body.client_id || !body.content) return json(res, 400, { success: false, error: 'client_id and content required' })
+      const data = await replyToClientMessage({ client_id: body.client_id, content: body.content, sender_name: body.sender_name || 'Team' })
+      return json(res, 201, { success: true, data })
+    }
+
+    if (method === 'GET' && pathname === '/crm/api/portal/documents') {
+      const clientId = query.get('client_id')
+      if (!clientId) return json(res, 400, { success: false, error: 'client_id required' })
+      const data = await listClientDocuments(clientId)
+      return json(res, 200, { success: true, data })
+    }
+
+    if (method === 'POST' && pathname === '/crm/api/portal/documents') {
+      if (!body.client_id || !body.title || !body.file_url) return json(res, 400, { success: false, error: 'client_id, title, and file_url required' })
+      const data = await createClientDocument({ ...body, uploaded_by: 'team' })
+      return json(res, 201, { success: true, data })
     }
 
     json(res, 404, { success: false, error: 'Not found' })
