@@ -4,3 +4,6 @@ dist/
 coverage/
 *.log
 .DS_Store
+
+# one-off migration script (contains no secrets now, but better to keep local)
+tmp-migrate.js
