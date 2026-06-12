@@ -3,7 +3,7 @@ import { supabase } from '../supabase.js'
 import { log } from '../utils/logger.js'
 import { sendEmail } from '../utils/resend.js'
 
-const PORTAL_BASE = process.env.SOFTWARE_DASHBOARD_URL || 'http://localhost:10001'
+const PORTAL_BASE = process.env.SOFTWARE_DASHBOARD_URL || process.env.SOFTWARE_PUBLIC_URL || 'http://localhost:10011'
 
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex')

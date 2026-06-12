@@ -1,19 +1,14 @@
-import {
+﻿import {
   supabase, queueOutreachEmail, queueCallBookingEmail,
   listProjects, getProject, createProject, updateProject, deleteProject,
   listMilestones, createMilestone, updateMilestone, deleteMilestone,
-  listClientMessages, replyToClientMessage,
-  listClientDocuments, createClientDocument,
-  listPortalClients, getPortalDashboard,
-  listTimeEntries, createTimeEntry, updateTimeEntry, deleteTimeEntry,
-  startTimer, pauseTimer, resumeTimer, stopTimer,
-  getActiveTimer, listActiveTimers,
-  getTimeReport, getWeeklyReport,
 } from '@flodon/core'
 
 const ADMIN_PROFILE_ID = process.env.CRM_ADMIN_PROFILE_ID || '00000000-0000-0000-0000-000000000001'
 const PER_PAGE = 20
-const CLOSED_STAGES = ['closed_won', 'closed_lost']
+const PIPELINE_STAGES = ['prospect', 'contacted', 'replied', 'discovery_booked', 'discovery_completed', 'audit_proposed', 'audit_purchased', 'audit_delivered', 'implementation_proposed', 'client', 'followup', 'lost']
+const CLIENT_CLOSED_STAGES = ['client', 'followup', 'lost']
+const DEAL_CLOSED_STAGES = ['closed_won', 'closed_lost']
 
 function json(res, status, payload) {
   res.writeHead(status, { 'Content-Type': 'application/json' })
@@ -57,84 +52,242 @@ async function resolveCompanyName(companyId) {
   return data?.name || null
 }
 
+// Try to create tables that may be missing (expenses, etc.)
+async function ensureSchemaTables() {
+  const queries = [
+    `CREATE TABLE IF NOT EXISTS public.expenses (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      amount NUMERIC NOT NULL DEFAULT 0,
+      category TEXT NOT NULL DEFAULT 'other',
+      description TEXT,
+      date DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_expenses_date ON public.expenses(date)`,
+    `ALTER TABLE public.deals ADD COLUMN IF NOT EXISTS cogs_monthly NUMERIC DEFAULT 0`,
+  ]
+  const errors = []
+  for (const query of queries) {
+    try {
+      await supabase.rpc('exec_sql', { query })
+    } catch (e) {
+      errors.push(e.message)
+    }
+  }
+  return errors
+}
+
+async function queryExpenses() {
+  try {
+    const { data, error } = await supabase.from('expenses').select('*').order('date', { ascending: false })
+    if (error) throw error
+    return data || []
+  } catch (e) {
+    const msg = e.message || ''
+    if (msg.includes('does not exist') || msg.includes('Could not find the table') || msg.includes('schema cache')) {
+      await ensureSchemaTables()
+      return []
+    }
+    throw e
+  }
+}
+
 async function getDashboardStats() {
   const now = new Date()
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
   const startOfWeek = new Date(now)
   startOfWeek.setDate(now.getDate() - now.getDay())
   startOfWeek.setHours(0, 0, 0, 0)
 
-  const [
-    { data: allDeals },
-    { data: closedWonThisMonth },
-    { count: closedWonCount },
-    { count: closedLostCount },
-    { count: newClientsThisWeek },
-    { data: emailQueueRows },
-    { count: overdueTasks },
-    { data: recentActivity },
-  ] = await Promise.all([
-    supabase.from('deals').select('amount_monthly, stage'),
-    supabase.from('deals').select('amount_monthly').eq('stage', 'closed_won').gte('updated_at', startOfMonth),
-    supabase.from('deals').select('id', { count: 'exact', head: true }).eq('stage', 'closed_won'),
-    supabase.from('deals').select('id', { count: 'exact', head: true }).eq('stage', 'closed_lost'),
-    supabase.from('clients').select('id', { count: 'exact', head: true }).gte('created_at', startOfWeek.toISOString()),
-    supabase.from('email_queue').select('status'),
-    supabase.from('tasks').select('id', { count: 'exact', head: true }).lt('deadline', now.toISOString()).neq('status', 'done'),
-    supabase
-      .from('activity_log')
-      .select('id, action, entity_type, entity_id, metadata, created_at, profiles(full_name)')
-      .order('created_at', { ascending: false })
-      .limit(10),
-  ])
+  // Helper: parse numeric, default 0
+  const $n = v => isNaN(v) ? 0 : Number(v)
 
-  const openDeals = (allDeals || []).filter(d => !CLOSED_STAGES.includes(d.stage))
-  const pipelineValue = openDeals.reduce((sum, d) => sum + (Number(d.amount_monthly) || 0), 0)
+  // ── Safe query: no unknown columns (cogs_monthly may not exist yet) ──
+  let allDeals, closedWonThisMonth, closedWonCount, closedLostCount
+  let newClientsThisWeek, newClientsThisMonth, emailQueueRows
+  let overdueTasks, followupClients, nurtureClients, recentActivity
+  let clientsByStage, totalClients, allClients
 
+  try {
+    const results = await Promise.all([
+      supabase.from('deals').select('amount_monthly, stage, created_at'),
+      supabase.from('deals').select('amount_monthly').eq('stage', 'closed_won').gte('updated_at', startOfMonth.toISOString()),
+      supabase.from('deals').select('id', { count: 'exact', head: true }).eq('stage', 'closed_won'),
+      supabase.from('deals').select('id', { count: 'exact', head: true }).eq('stage', 'closed_lost'),
+      supabase.from('clients').select('id', { count: 'exact', head: true }).gte('created_at', startOfWeek.toISOString()),
+      supabase.from('clients').select('id', { count: 'exact', head: true }).gte('created_at', startOfMonth.toISOString()),
+      supabase.from('email_queue').select('status'),
+      supabase.from('tasks').select('id', { count: 'exact', head: true }).lt('deadline', now.toISOString()).neq('status', 'done'),
+      supabase.from('clients').select('id', { count: 'exact', head: true }).eq('pipeline_stage', 'followup'),
+      supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_nurture', true),
+      supabase
+        .from('activity_log')
+        .select('id, action, entity_type, entity_id, metadata, created_at, profiles(full_name)')
+        .order('created_at', { ascending: false })
+        .limit(10),
+      supabase.from('clients').select('pipeline_stage'),
+      supabase.from('clients').select('id', { count: 'exact', head: true }),
+      supabase.from('clients').select('pipeline_stage, lead_source, industry, service, is_nurture'),
+    ])
+    allDeals = results[0]?.data || []
+    closedWonThisMonth = results[1]?.data || []
+    closedWonCount = results[2]?.count || 0
+    closedLostCount = results[3]?.count || 0
+    newClientsThisWeek = results[4]?.count || 0
+    newClientsThisMonth = results[5]?.count || 0
+    emailQueueRows = results[6]?.data || []
+    overdueTasks = results[7]?.count || 0
+    followupClients = results[8]?.count || 0
+    nurtureClients = results[9]?.count || 0
+    recentActivity = results[10]?.data || []
+    clientsByStage = results[11]?.data || []
+    totalClients = results[12]?.count || 0
+    allClients = results[13]?.data || []
+  } catch (e) {
+    // fall through with empty defaults
+  }
+
+  // ── COGS — fetched separately in case column doesn't exist ──
+  let totalCOGS = 0
+  try {
+    const { data: cogsRows } = await supabase.from('deals').select('cogs_monthly, amount_monthly, stage')
+    const wonRows = (cogsRows || []).filter(d => d.stage === 'closed_won')
+    totalCOGS = wonRows.reduce((s, d) => s + $n(d.cogs_monthly || 0), 0)
+  } catch (e) {
+    // cogs_monthly column may not exist yet
+  }
+
+  // Expenses — fetched separately in case table doesn't exist yet
+  let thisMonthExpenses = []
+  try {
+    const expenses = await queryExpenses()
+    thisMonthExpenses = (expenses || []).filter(r => r.date >= startOfMonth.toISOString().slice(0,10))
+  } catch (e) {
+    // expenses table may not exist yet
+  }
+
+  // ── Pipeline (open) deals ──
+  const openDeals = (allDeals || []).filter(d => !DEAL_CLOSED_STAGES.includes(d.stage))
+  const pipelineValue = openDeals.reduce((sum, d) => sum + $n(d.amount_monthly), 0)
+  // Total MRR = all closed_won deals
+  const totalMRR = (allDeals || []).filter(d => d.stage === 'closed_won').reduce((sum, d) => sum + $n(d.amount_monthly), 0)
+  const grossProfit = totalMRR - totalCOGS
+  const grossMargin = totalMRR > 0 ? (grossProfit / totalMRR) * 100 : 0
+
+  const totalExpenses = (thisMonthExpenses || []).reduce((sum, r) => sum + $n(r.amount), 0)
+  const netProfit = grossProfit - totalExpenses
+  const netMargin = totalMRR > 0 ? (netProfit / totalMRR) * 100 : 0
+
+  const arr = totalMRR * 12
+
+  // ── Deal counts ──
   const dealsByStage = {}
-  for (const deal of allDeals || []) {
-    dealsByStage[deal.stage] = (dealsByStage[deal.stage] || 0) + 1
+  for (const d of allDeals || []) dealsByStage[d.stage] = (dealsByStage[d.stage] || 0) + 1
+
+  // ── Client pipeline distribution ──
+  const pipelineDistribution = {}
+  for (const c of clientsByStage || []) {
+    const st = c.pipeline_stage || 'prospect'
+    pipelineDistribution[st] = (pipelineDistribution[st] || 0) + 1
   }
 
   const closedWonThisMonthCount = closedWonThisMonth?.length || 0
-  const closedWonThisMonthValue = (closedWonThisMonth || []).reduce((sum, d) => sum + (Number(d.amount_monthly) || 0), 0)
+  const closedWonThisMonthValue = (closedWonThisMonth || []).reduce((sum, d) => sum + $n(d.amount_monthly), 0)
 
-  const totalClosed = (closedWonCount || 0) + (closedLostCount || 0)
-  const conversionRate = totalClosed > 0 ? ((closedWonCount || 0) / totalClosed) * 100 : 0
+  const totalClosed = $n(closedWonCount) + $n(closedLostCount)
+  const conversionRate = totalClosed > 0 ? ($n(closedWonCount) / totalClosed) * 100 : 0
 
-  const emailQueueByStatus = {}
-  for (const row of emailQueueRows || []) {
-    emailQueueByStatus[row.status] = (emailQueueByStatus[row.status] || 0) + 1
-  }
-
+  // ── Averages ──
   const wonDeals = (allDeals || []).filter(d => d.stage === 'closed_won')
   const avgDealSize = wonDeals.length > 0
-    ? wonDeals.reduce((sum, d) => sum + (Number(d.amount_monthly) || 0), 0) / wonDeals.length
+    ? wonDeals.reduce((sum, d) => sum + $n(d.amount_monthly), 0) / wonDeals.length
+    : 0
+  const avgCOGS = totalCOGS > 0 && wonDeals.length > 0
+    ? totalCOGS / wonDeals.length
     : 0
 
-  const mappedRecentActivity = (recentActivity || []).map(row => ({
-    ...row,
-    profile_name: row.profiles?.full_name || null,
+  // ── Churn rate (clients lost this month / total clients at start) ──
+  const lostThisMonth = (allClients || []).filter(c => c.pipeline_stage === 'lost').length
+  const activeClients = (allClients || []).filter(c => c.pipeline_stage !== 'lost').length
+  const churnRate = activeClients > 0 ? (lostThisMonth / (lostThisMonth + activeClients)) * 100 : 0
+
+  // ── Source / Industry / Service breakdown ──
+  const bySource = {}
+  const byIndustry = {}
+  const byService = {}
+  for (const c of allClients || []) {
+    const src = c.lead_source || 'manual'
+    bySource[src] = (bySource[src] || 0) + 1
+    const ind = c.industry || 'unknown'
+    byIndustry[ind] = (byIndustry[ind] || 0) + 1
+    const svc = c.service || 'none'
+    byService[svc] = (byService[svc] || 0) + 1
+  }
+
+  const mappedRecentActivity = (recentActivity || []).map(r => ({
+    ...r,
+    profile_name: r.profiles?.full_name || null,
     profiles: undefined,
   }))
 
+  const totalOpenDeals = openDeals.length
+  const closedLostThisMonthCount = $n(closedLostCount)
+  const totalDeals = (allDeals || []).length
+  const emailQueueByStatus = {}
+
   return {
+    // Legacy fields
     pipelineValue,
     dealsByStage,
+    pipelineDistribution,
     closedWonThisMonth: { count: closedWonThisMonthCount, value: closedWonThisMonthValue },
+    total_clients: totalClients || 0,
+    total_deals: totalDeals,
+    open_deals: totalOpenDeals,
     conversionRate: Math.round(conversionRate * 100) / 100,
     newClientsThisWeek: newClientsThisWeek || 0,
+    newClientsThisMonth: newClientsThisMonth || 0,
+    closedLostThisMonth: closedLostThisMonthCount,
+    followupClients: followupClients || 0,
+    nurtureClients: nurtureClients || 0,
     emailQueueByStatus,
     overdueTasks: overdueTasks || 0,
     recentActivity: mappedRecentActivity,
 
-    // Snake case fallback for frontend dashboard
+    // New premium KPI fields
+    total_mrr: totalMRR,
+    total_cogs: totalCOGS,
+    gross_profit: grossProfit,
+    gross_margin: Math.round(grossMargin * 100) / 100,
+    total_expenses: totalExpenses,
+    net_profit: netProfit,
+    net_margin: Math.round(netMargin * 100) / 100,
+    arr: arr,
+    avg_cogs: Math.round(avgCOGS * 100) / 100,
+    churn_rate: Math.round(churnRate * 100) / 100,
+
+    // Client breakdowns
+    clients_by_source: bySource,
+    clients_by_industry: byIndustry,
+    clients_by_service: byService,
+    clients_in_pipeline: activeClients,
+    clients_lost: lostThisMonth,
+
+    // Legacy snake_case aliases
     pipeline_value: pipelineValue,
     deals_by_stage: dealsByStage,
+    pipeline_distribution: pipelineDistribution,
     closed_won_value: closedWonThisMonthValue,
     closed_won_count: closedWonThisMonthCount,
+    closed_lost_count: closedLostThisMonthCount,
     conversion_rate: Math.round(conversionRate * 100) / 100,
     avg_deal_size: Math.round(avgDealSize * 100) / 100,
+    new_clients_week: newClientsThisWeek || 0,
+    new_clients_month: newClientsThisMonth || 0,
+    followup_count: followupClients || 0,
+    nurture_count: nurtureClients || 0,
+    open_deals_count: totalOpenDeals,
+    total_deals_count: totalDeals,
     email_queue: emailQueueByStatus,
     recent_activity: mappedRecentActivity,
   }
@@ -155,9 +308,9 @@ async function listClients(query) {
 
   const isNurture = query.get('nurture')
   if (isNurture === 'true') {
-    q = q.eq('is_nurture', true)
+    q = q.or('is_nurture.eq.true,pipeline_stage.eq.nurture')
   } else if (isNurture === 'false') {
-    q = q.eq('is_nurture', false)
+    q = q.not('is_nurture', 'eq', true).not('pipeline_stage', 'eq', 'nurture')
   }
 
   if (stage) q = q.eq('pipeline_stage', stage)
@@ -180,7 +333,7 @@ async function listClients(query) {
     clients: (data || []).map(c => ({
       ...c,
       source: c.lead_source || 'manual',
-      website: c.source_url || null,
+      website: c.website || null,
       company_name: c.companies?.name || null,
       companies: undefined,
     })),
@@ -188,6 +341,25 @@ async function listClients(query) {
     perPage: PER_PAGE,
     total: count || 0,
     totalPages: Math.ceil((count || 0) / PER_PAGE),
+  }
+}
+
+async function getClient(id) {
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*, companies(name)')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) throw new Error('Client not found')
+
+  return {
+    ...data,
+    source: data.lead_source || 'manual',
+    website: data.website || null,
+    company_name: data.companies?.name || null,
+    companies: undefined,
   }
 }
 
@@ -223,29 +395,31 @@ async function resolveOrCreateCompany(body) {
 async function createClient(body) {
   const { name, email, phone, role, industry, source, notes, service } = body
 
-  const [{ data: profile }, resolvedCompanyId] = await Promise.all([
-    supabase.from('profiles').select('full_name').eq('id', ADMIN_PROFILE_ID).maybeSingle(),
-    resolveOrCreateCompany(body),
-  ])
+  const resolvedCompanyId = await resolveOrCreateCompany(body)
 
-  const addedByName = profile?.full_name || 'CRM Admin'
+  const insertData = {
+    name,
+    email,
+    phone,
+    company_id: resolvedCompanyId,
+    brand_name: body.company_name || body.brand_name || null,
+    role,
+    industry,
+    lead_source: source || 'manual',
+    notes,
+    service: service || 'General',
+    added_by: ADMIN_PROFILE_ID,
+    added_by_name: 'CRM Admin',
+    pipeline_stage: body.pipeline_stage || 'prospect',
+  }
+
+  if (body.pipeline_data) {
+    insertData.pipeline_data = body.pipeline_data
+  }
 
   const { data: client, error } = await supabase
     .from('clients')
-    .insert({
-      name,
-      email,
-      phone,
-      company_id: resolvedCompanyId,
-      brand_name: body.company_name || body.brand_name || null,
-      role,
-      industry,
-      lead_source: source || 'manual',
-      notes,
-      service: service || 'General',
-      added_by: ADMIN_PROFILE_ID,
-      added_by_name: addedByName,
-    })
+    .insert(insertData)
     .select('*, companies(name)')
     .single()
 
@@ -268,7 +442,7 @@ async function createClient(body) {
   return {
     ...client,
     source: client.lead_source || 'manual',
-    website: client.source_url || null,
+    website: client.website || null,
     company_name: companyName,
     companies: undefined,
   }
@@ -296,6 +470,10 @@ async function updateClient(id, body) {
     }
   }
 
+  if (body.pipeline_data !== undefined) {
+    updates.pipeline_data = { ...((existing.pipeline_data || {})), ...body.pipeline_data }
+  }
+
   if (body.company_name !== undefined || body.brand_name !== undefined) {
     updates.company_id = await resolveOrCreateCompany(body)
     updates.brand_name = body.company_name || body.brand_name || null
@@ -317,7 +495,7 @@ async function updateClient(id, body) {
     })
   }
 
-  if (body.pipeline_stage === 'call_booked' && body.call_id) {
+  if ((body.pipeline_stage === 'discovery_booked' || body.pipeline_stage === 'call_booked') && body.call_id) {
     const { data: call } = await supabase.from('calls').select('*').eq('id', body.call_id).maybeSingle()
     const companyName = client.companies?.name || await resolveCompanyName(client.company_id)
     await queueCallBookingEmail(id, body.deal_id || null, body.call_id, {
@@ -342,7 +520,7 @@ async function updateClient(id, body) {
   return {
     ...client,
     source: client.lead_source || 'manual',
-    website: client.source_url || null,
+    website: client.website || null,
     company_name: client.companies?.name || null,
     companies: undefined,
   }
@@ -498,275 +676,6 @@ async function getPipeline() {
   return pipeline
 }
 
-async function listCompanies() {
-  const [companiesRes, clientsRes] = await Promise.all([
-    supabase.from('companies').select('*').order('name'),
-    supabase.from('clients').select('company_id')
-  ])
-  if (companiesRes.error) throw companiesRes.error
-  if (clientsRes.error) throw clientsRes.error
-
-  const clientCounts = {}
-  for (const c of clientsRes.data || []) {
-    if (c.company_id) {
-      clientCounts[c.company_id] = (clientCounts[c.company_id] || 0) + 1
-    }
-  }
-
-  return (companiesRes.data || []).map(comp => ({
-    ...comp,
-    client_count: clientCounts[comp.id] || 0
-  }))
-}
-
-async function createCompany(body) {
-  const { data, error } = await supabase.from('companies').insert(body).select().single()
-  if (error) throw error
-  await logActivity('company_created', 'company', data.id, { name: data.name })
-  return data
-}
-
-async function listTasks(query) {
-  let q = supabase
-    .from('tasks')
-    .select('*, clients(name), deals(title)')
-    .order('created_at', { ascending: false })
-
-  const assignedTo = query.get('assigned_to')
-  const status = query.get('status')
-  const clientId = query.get('client_id')
-
-  if (assignedTo) q = q.eq('agent_id', assignedTo)
-  if (status) q = q.eq('status', status)
-  if (clientId) q = q.eq('client_id', clientId)
-
-  const [tasksRes, profilesRes] = await Promise.all([
-    q,
-    supabase.from('profiles').select('id, full_name')
-  ])
-
-  if (tasksRes.error) throw tasksRes.error
-
-  const profileMap = {}
-  for (const p of profilesRes.data || []) {
-    profileMap[p.id] = p.full_name
-  }
-
-  return (tasksRes.data || []).map(t => ({
-    ...t,
-    client_name: t.clients?.name || '—',
-    deal_title: t.deals?.title || '—',
-    assigned_name: profileMap[t.agent_id] || '—',
-    clients: undefined,
-    deals: undefined,
-  }))
-}
-
-async function createTask(body) {
-  const insertBody = { ...body }
-  if (insertBody.assigned_to) {
-    insertBody.agent_id = insertBody.assigned_to
-    delete insertBody.assigned_to
-  }
-  const { data, error } = await supabase.from('tasks').insert(insertBody).select().single()
-  if (error) throw error
-  await logActivity('task_created', 'task', data.id, { title: data.title })
-  return data
-}
-
-async function updateTask(id, body) {
-  const updates = { ...body }
-  delete updates.id
-  if (updates.assigned_to) {
-    updates.agent_id = updates.assigned_to
-    delete updates.assigned_to
-  }
-
-  const { data, error } = await supabase.from('tasks').update(updates).eq('id', id).select().single()
-  if (error) throw error
-  if (!data) throw new Error('Task not found')
-  return data
-}
-
-async function listCalls(query) {
-  let q = supabase
-    .from('calls')
-    .select('*, clients(name, company_id, companies(name))')
-    .order('created_at', { ascending: false })
-
-  const clientId = query.get('client_id')
-  const status = query.get('status')
-
-  if (clientId) q = q.eq('client_id', clientId)
-  if (status) q = q.eq('status', status)
-
-  const { data, error } = await q
-  if (error) throw error
-  return (data || []).map(c => ({
-    ...c,
-    client_name: c.clients?.name || c.prospect_name || '—',
-    company_name: c.clients?.companies?.name || c.company || '—',
-    clients: undefined,
-  }))
-}
-
-async function createCall(body) {
-  // Preserve deal_id for email queue before stripping from insert payload
-  const dealId = body.deal_id || null
-  const insertBody = { ...body }
-  delete insertBody.deal_id
-  delete insertBody.booked_date
-  delete insertBody.booked_start
-  delete insertBody.booked_end
-  delete insertBody.start_time
-  delete insertBody.end_time
-
-  const { data: call, error } = await supabase.from('calls').insert(insertBody).select().single()
-  if (error) throw error
-
-  await logActivity('call_created', 'call', call.id, { status: call.status })
-
-  if (call.client_id) {
-    const { data: client } = await supabase
-      .from('clients')
-      .select('name, company_id, companies(name)')
-      .eq('id', call.client_id)
-      .maybeSingle()
-
-    await queueCallBookingEmail(
-      call.client_id,
-      dealId,
-      call.id,
-      {
-        name: client?.name || call.prospect_name,
-        company: client?.companies?.name,
-        date: call.scheduled_at,
-        startTime: null,
-        endTime: null,
-      }
-    )
-  }
-
-  return call
-}
-
-async function listEmailQueue(query) {
-  const page = Math.max(1, parseInt(query.get('page') || '1', 10))
-  const status = query.get('status')
-  const from = (page - 1) * PER_PAGE
-  const to = from + PER_PAGE - 1
-
-  let q = supabase
-    .from('email_queue')
-    .select('*, clients(name, email)', { count: 'exact' })
-    .order('created_at', { ascending: false })
-    .range(from, to)
-
-  if (status) q = q.eq('status', status)
-
-  const { data, error, count } = await q
-  if (error) throw error
-
-  return {
-    items: (data || []).map(item => ({
-      ...item,
-      client_name: item.clients?.name || '—',
-      to: item.clients?.email || '—',
-      clients: undefined,
-    })),
-    page,
-    perPage: PER_PAGE,
-    total: count || 0,
-    totalPages: Math.ceil((count || 0) / PER_PAGE),
-  }
-}
-
-async function retryEmailQueue(id) {
-  const { data, error } = await supabase
-    .from('email_queue')
-    .update({ status: 'queued', error_message: null })
-    .eq('id', id)
-    .select()
-    .single()
-
-  if (error) throw error
-  if (!data) throw new Error('Email queue item not found')
-  return data
-}
-
-async function getSettingsKeys() {
-  const { data, error } = await supabase
-    .from('settings')
-    .select('key, value')
-    .in('key', ['resend_api_key', 'gmail_user', 'gmail_app_password', 'gmail_from_name'])
-
-  if (error) throw error
-
-  const map = {}
-  for (const row of data || []) map[row.key] = row.value || ''
-
-  return {
-    resend_api_key: map.resend_api_key || '',
-    gmail_user: map.gmail_user || '',
-    gmail_app_password: map.gmail_app_password || '',
-    gmail_from_name: map.gmail_from_name || '',
-  }
-}
-
-async function updateSettingsKeys(body) {
-  const allowedKeys = ['resend_api_key', 'gmail_user', 'gmail_app_password', 'gmail_from_name']
-  const entries = []
-  
-  for (const key of allowedKeys) {
-    if (body[key] !== undefined) {
-      entries.push([key, String(body[key]).trim()])
-    }
-  }
-
-  for (const [key, value] of entries) {
-    const { error } = await supabase
-      .from('settings')
-      .upsert({ key, value }, { onConflict: 'key' })
-    if (error) throw error
-  }
-
-  // Clear caches in resend.js dynamically to pick up new DB config
-  try {
-    const { clearEmailConfigCache } = await import('@flodon/core/utils/resend.js')
-    if (clearEmailConfigCache) clearEmailConfigCache()
-    const { clearResendConfigCache } = await import('@flodon/core/lib/resend.js')
-    if (clearResendConfigCache) clearResendConfigCache()
-  } catch(e) {
-    // Ignore if not present
-  }
-
-  return getSettingsKeys()
-}
-
-async function triggerNurtureAction(clientId, type) {
-  const { data: client, error } = await supabase
-    .from('clients')
-    .select('name, email, phone')
-    .eq('id', clientId)
-    .single()
-    
-  if (error) throw error
-  
-  if (type === 'email') {
-    if (!client.email) throw new Error('Client has no email')
-    const { sendLongTermNurtureEmail } = await import('@flodon/core/utils/resend.js')
-    // sendLongTermNurtureEmail also triggers whatsapp inside if phone is present,
-    // but the user said they don't want whatsapp stuff right now. 
-    // We can just call it (it handles whatsapp natively if it exists, though they might not configure twilio).
-    await sendLongTermNurtureEmail(client.email, null, client.name) // Passing null for phone so no WhatsApp is sent
-    await logActivity('nurture_email_sent', 'client', clientId, { email: client.email })
-  } else {
-    throw new Error('Unsupported nurture action')
-  }
-  
-  return { success: true }
-}
-
 export async function handleCRMRequest(req, res, url, method, body) {
   if (!url.startsWith('/crm')) return false
 
@@ -781,10 +690,7 @@ export async function handleCRMRequest(req, res, url, method, body) {
 
     // GET /crm/api/clients
     if (method === 'GET' && pathname === '/crm/api/clients') {
-      // By default, exclude nurture leads from the main list unless explicitly requested
-      if (!query.has('nurture')) {
-        query.set('nurture', 'false')
-      }
+      // Show all clients; use ?nurture=true/false to filter nurture-specific
       const data = await listClients(query)
       return json(res, 200, { success: true, data })
     }
@@ -800,6 +706,15 @@ export async function handleCRMRequest(req, res, url, method, body) {
     if (method === 'POST' && pathname === '/crm/api/clients') {
       const data = await createClient(body || {})
       return json(res, 201, { success: true, data })
+    }
+
+    // GET /crm/api/clients/:id
+    {
+      const params = matchRoute(pathname, '/crm/api/clients/:id')
+      if (method === 'GET' && params) {
+        const data = await getClient(params.id)
+        return json(res, 200, { success: true, data })
+      }
     }
 
     // PATCH /crm/api/clients/:id
@@ -838,99 +753,19 @@ export async function handleCRMRequest(req, res, url, method, body) {
       return json(res, 200, { success: true, data })
     }
 
-    // GET /crm/api/companies
-    if (method === 'GET' && pathname === '/crm/api/companies') {
-      const data = await listCompanies()
-      return json(res, 200, { success: true, data })
-    }
-
-    // POST /crm/api/companies
-    if (method === 'POST' && pathname === '/crm/api/companies') {
-      const data = await createCompany(body || {})
-      return json(res, 201, { success: true, data })
-    }
-
-    // GET /crm/api/tasks
-    if (method === 'GET' && pathname === '/crm/api/tasks') {
-      const data = await listTasks(query)
-      return json(res, 200, { success: true, data })
-    }
-
-    // POST /crm/api/tasks
-    if (method === 'POST' && pathname === '/crm/api/tasks') {
-      const data = await createTask(body || {})
-      return json(res, 201, { success: true, data })
-    }
-
-    // PATCH /crm/api/tasks/:id
-    {
-      const params = matchRoute(pathname, '/crm/api/tasks/:id')
-      if (method === 'PATCH' && params) {
-        const data = await updateTask(params.id, body || {})
-        return json(res, 200, { success: true, data })
-      }
-    }
-
-    // GET /crm/api/calls
-    if (method === 'GET' && pathname === '/crm/api/calls') {
-      const data = await listCalls(query)
-      return json(res, 200, { success: true, data })
-    }
-
-    // POST /crm/api/calls
-    if (method === 'POST' && pathname === '/crm/api/calls') {
-      const data = await createCall(body || {})
-      return json(res, 201, { success: true, data })
-    }
-
-    // GET /crm/api/email-queue
-    if (method === 'GET' && pathname === '/crm/api/email-queue') {
-      const data = await listEmailQueue(query)
-      return json(res, 200, { success: true, data })
-    }
-
-    // PATCH /crm/api/email-queue/:id/retry
-    {
-      const params = matchRoute(pathname, '/crm/api/email-queue/:id/retry')
-      if (method === 'PATCH' && params) {
-        const data = await retryEmailQueue(params.id)
-        return json(res, 200, { success: true, data })
-      }
-    }
-
-    // GET /crm/api/settings/keys
-    if (method === 'GET' && pathname === '/crm/api/settings/keys') {
-      const data = await getSettingsKeys()
-      return json(res, 200, { success: true, data })
-    }
-
-    // POST /crm/api/settings/keys
-    if (method === 'POST' && pathname === '/crm/api/settings/keys') {
-      const data = await updateSettingsKeys(body || {})
-      return json(res, 200, { success: true, data })
-    }
-
-    // POST /crm/api/nurture/trigger
-    if (method === 'POST' && pathname === '/crm/api/nurture/trigger') {
-      if (!body.client_id || !body.type) {
-         return json(res, 400, { success: false, error: 'client_id and type are required' })
-      }
-      const data = await triggerNurtureAction(body.client_id, body.type)
-      return json(res, 200, { success: true, data })
-    }
-
     // GET /crm/api/settings
     if (method === 'GET' && pathname === '/crm/api/settings') {
-      const { data, error } = await supabase.from('settings').select('key, value')
+      const { data, error } = await supabase.from('settings').select('key, value').in('key', ['gmail_user', 'gmail_app_password', 'gmail_from_name', 'admin_email', 'resend_api_key'])
       if (error) throw error
       const map = {}
       for (const row of data || []) map[row.key] = row.value
-      return json(res, 200, { success: true, settings: map, data: map })
+      return json(res, 200, { success: true, data: map })
     }
 
     // POST /crm/api/settings
     if (method === 'POST' && pathname === '/crm/api/settings') {
       for (const [key, value] of Object.entries(body || {})) {
+        if (!['gmail_user', 'gmail_app_password', 'gmail_from_name', 'admin_email', 'resend_api_key'].includes(key)) continue
         const { error } = await supabase.from('settings').upsert({ key, value: String(value) }, { onConflict: 'key' })
         if (error) throw error
       }
@@ -989,101 +824,52 @@ export async function handleCRMRequest(req, res, url, method, body) {
       }
     }
 
-    // ─── Time Tracking (CRM routes) ───
-    if (method === 'GET' && pathname === '/crm/api/time/entries') {
-      const data = await listTimeEntries({
-        team_member: query.get('team_member'), client_id: query.get('client_id'),
-        project_id: query.get('project_id'),
-        date_from: query.get('date_from'), date_to: query.get('date_to'),
-        page: parseInt(query.get('page') || '1'), limit: parseInt(query.get('limit') || '50'),
-      })
-      return json(res, 200, { success: true, ...data })
+    // ─── Migration helper ───
+    if (method === 'POST' && pathname === '/crm/api/migrate') {
+      const errors = await ensureSchemaTables()
+      return json(res, 200, { success: true, errors })
     }
 
-    if (method === 'POST' && pathname === '/crm/api/time/entries') {
-      const data = await createTimeEntry(body)
+    // ─── Expenses ───
+    if (method === 'GET' && pathname === '/crm/api/expenses') {
+      const data = await queryExpenses()
+      return json(res, 200, { success: true, data })
+    }
+
+    if (method === 'POST' && pathname === '/crm/api/expenses') {
+      const { data, error } = await supabase
+        .from('expenses')
+        .insert(body)
+        .select()
+        .single()
+      if (error) {
+        const msg = error.message || ''
+        if (msg.includes('does not exist') || msg.includes('schema cache') || msg.includes('Could not find the table')) {
+          await ensureSchemaTables()
+          const retry = await supabase.from('expenses').insert(body).select().single()
+          if (retry.error) throw retry.error
+          return json(res, 201, { success: true, data: retry.data })
+        }
+        throw error
+      }
       return json(res, 201, { success: true, data })
     }
 
     {
-      const params = matchRoute(pathname, '/crm/api/time/entries/:id')
-      if (method === 'PATCH' && params) {
-        const data = await updateTimeEntry(params.id, body)
-        return json(res, 200, { success: true, data })
-      }
+      const params = matchRoute(pathname, '/crm/api/expenses/:id')
       if (method === 'DELETE' && params) {
-        const data = await deleteTimeEntry(params.id)
-        return json(res, 200, { success: true, data })
+        const { error } = await supabase.from('expenses').delete().eq('id', params.id)
+        if (error) {
+          const msg = error.message || ''
+          if (msg.includes('does not exist') || msg.includes('schema cache') || msg.includes('Could not find the table')) {
+            await ensureSchemaTables()
+            const retry = await supabase.from('expenses').delete().eq('id', params.id)
+            if (retry.error) throw retry.error
+          }
+          throw error
+        }
+        return json(res, 200, { success: true })
       }
-    }
-
-    if (method === 'POST' && pathname === '/crm/api/time/timer/start') {
-      const data = await startTimer(body)
-      return json(res, 201, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname.startsWith('/crm/api/time/timer/')) {
-      const parts = pathname.split('/')
-      const action = parts[5]
-      const id = parts.length > 6 ? parts[6] : body?.id
-      if (!id) return json(res, 400, { success: false, error: 'Timer ID required' })
-      let data
-      if (action === 'pause') data = await pauseTimer(id)
-      else if (action === 'resume') data = await resumeTimer(id)
-      else if (action === 'stop') data = await stopTimer(id)
-      else return json(res, 400, { success: false, error: 'Invalid action' })
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'GET' && pathname === '/crm/api/time/timer/active') {
-      const teamMember = query.get('team_member')
-      const data = teamMember ? await getActiveTimer(teamMember) : await listActiveTimers()
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'GET' && pathname === '/crm/api/time/report') {
-      const data = await getTimeReport({
-        team_member: query.get('team_member'), client_id: query.get('client_id'),
-        project_id: query.get('project_id'), date_from: query.get('date_from'), date_to: query.get('date_to'),
-      })
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'GET' && pathname === '/crm/api/time/weekly') {
-      const data = await getWeeklyReport({ week_start: query.get('week_start'), team_member: query.get('team_member') })
-      return json(res, 200, { success: true, data })
-    }
-
-    // ─── Portal Admin (CRM manages client portal) ───
-    if (method === 'GET' && pathname === '/crm/api/portal/clients') {
-      const data = await listPortalClients()
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'GET' && pathname === '/crm/api/portal/messages') {
-      const clientId = query.get('client_id')
-      if (!clientId) return json(res, 400, { success: false, error: 'client_id required' })
-      const data = await listClientMessages(clientId)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/crm/api/portal/reply') {
-      if (!body.client_id || !body.content) return json(res, 400, { success: false, error: 'client_id and content required' })
-      const data = await replyToClientMessage({ client_id: body.client_id, content: body.content, sender_name: body.sender_name || 'Team' })
-      return json(res, 201, { success: true, data })
-    }
-
-    if (method === 'GET' && pathname === '/crm/api/portal/documents') {
-      const clientId = query.get('client_id')
-      if (!clientId) return json(res, 400, { success: false, error: 'client_id required' })
-      const data = await listClientDocuments(clientId)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/crm/api/portal/documents') {
-      if (!body.client_id || !body.title || !body.file_url) return json(res, 400, { success: false, error: 'client_id, title, and file_url required' })
-      const data = await createClientDocument({ ...body, uploaded_by: 'team' })
-      return json(res, 201, { success: true, data })
     }
 
     json(res, 404, { success: false, error: 'Not found' })

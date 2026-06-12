@@ -197,7 +197,7 @@ export function getPortalHTML(sessionToken) {
     // ─── LOGIN ───
     function showLogin(){
       var el=document.getElementById('app')
-      el.innerHTML='<div class="login-wrap"><div class="login-card"><h1>FLODON</h1><p>Client Portal</p><div class="field"><input type="email" id="login-email" placeholder="Enter your email address" onkeydown="if(event.key==\'Enter\')sendMagicLink()"></div><button class="btn btn-primary w-full" id="login-btn" onclick="sendMagicLink()">Send Magic Link</button><div id="login-status"></div></div></div>'
+      el.innerHTML='<div class="login-wrap"><div class="login-card"><h1>FLODON</h1><p>Client Portal</p><div class="field"><input type="email" id="login-email" placeholder="Enter your email address" onkeydown="if(event.key==\\'Enter\\')sendMagicLink()"></div><button class="btn btn-primary w-full" id="login-btn" onclick="sendMagicLink()">Send Magic Link</button><div id="login-status"></div></div></div>'
       var params = new URLSearchParams(window.location.search)
       if(params.get('error')){
         document.getElementById('login-status').innerHTML='<div class="success" style="color:#ff4444">'+esc(params.get('error'))+'</div>'
@@ -231,7 +231,7 @@ export function getPortalHTML(sessionToken) {
         '<div class="stat-grid" id="pd-stats"></div>'+
         '<div style="margin-bottom:16px;background:#0a0a0a;border:1px solid #1a1a1a;padding:16px;text-align:center" id="pd-overall"><div class="card-title" style="margin-bottom:8px">Overall Progress</div><div class="progress-ring" id="pd-ring"></div><div class="progress-track" style="max-width:400px;margin:0 auto 8px;height:6px;border-radius:3px" id="pd-track-wrap"></div><span class="text-sm text-muted" id="pd-overall-text"></span></div>'+
         '<div class="grid-2"><div class="card" id="pd-projects-card"><div class="card-title">Your Projects</div><div id="pd-projects"><div class="empty-state" style="padding:12px">Loading...</div></div></div>'+
-        '<div class="card" id="pd-activity-card"><div class="card-title">What\'s Happening</div><div id="pd-activity"><div class="empty-state" style="padding:12px">Loading...</div></div></div></div>'+
+        '<div class="card" id="pd-activity-card"><div class="card-title">What\\'s Happening</div><div id="pd-activity"><div class="empty-state" style="padding:12px">Loading...</div></div></div></div>'+
         '<div class="card" id="pd-upcoming-card"><div class="card-title">Upcoming Deadlines</div><div id="pd-upcoming"><div class="empty-state" style="padding:12px">Loading...</div></div></div>'
       loadPortalDashboard()
       dashRefresh = setInterval(loadPortalDashboard, 15000)
@@ -267,7 +267,7 @@ export function getPortalHTML(sessionToken) {
           var ms=p.milestones||[]
           var next=p.next_milestone
           var activeMs=ms.filter(function(m){return m.status==='in_progress'})
-          return '<div class="project-card" style="cursor:pointer;margin-bottom:10px" onclick="window.location.hash=\'#projects\'"><div class="flex-between mb-4"><h3>'+esc(p.name)+'</h3><span class="badge '+(p.status==='active'?'badge-neon':p.status==='completed'?'badge-green':p.status==='on_hold'?'badge-amber':'badge-gray')+'">'+esc(p.status).replace(/_/g,' ')+'</span></div>'+
+          return '<div class="project-card" style="cursor:pointer;margin-bottom:10px" onclick="window.location.hash=\\'#projects\\'"><div class="flex-between mb-4"><h3>'+esc(p.name)+'</h3><span class="badge '+(p.status==='active'?'badge-neon':p.status==='completed'?'badge-green':p.status==='on_hold'?'badge-amber':'badge-gray')+'">'+esc(p.status).replace(/_/g,' ')+'</span></div>'+
             '<div class="flex-between text-sm mb-4"><span class="text-muted">'+p.progress+'% complete</span>'+
             (next?'<span class="text-xs">Next: <strong style="color:#00f0ff">'+esc(next.name)+'</strong></span>':'')+'</div>'+
             '<div class="progress-track"><div class="progress-fill'+(p.status==='completed'?' done':'')+'" style="width:'+p.progress+'%"></div></div>'+
@@ -337,12 +337,12 @@ export function getPortalHTML(sessionToken) {
     function renderPortalDeals(){
       var el=document.getElementById('page-content')
       el.innerHTML='<div class="page-header"><h2>Deals</h2><p>Your deal pipeline and progress</p></div><div id="deals-list"><div class="empty-state">Loading...</div></div>'
-      var STAGES = ['lead', 'contacted', 'demo', 'proposal', 'negotiation', 'closed_won', 'closed_lost']
+      var DEAL_STAGES = ['lead', 'contacted', 'demo', 'proposal', 'negotiation', 'closed_won', 'closed_lost']
       portalApi('GET','/deals').then(function(d){
         d=d||[]
         document.getElementById('deals-list').innerHTML=d.length?d.map(function(dl){
-          var idx=STAGES.indexOf(dl.stage)
-          var stageHtml=STAGES.map(function(s,i){
+          var idx=DEAL_STAGES.indexOf(dl.stage)
+          var stageHtml=DEAL_STAGES.map(function(s,i){
             var cls='stage-dot'
             if(i<=idx&&dl.stage!=='closed_lost') cls+=' active'
             if(i===idx&&dl.stage!=='closed_lost') cls+=' current'
@@ -399,7 +399,7 @@ export function getPortalHTML(sessionToken) {
     function renderPortalMessages(){
       if(msgRefresh) clearInterval(msgRefresh)
       var el=document.getElementById('page-content')
-      el.innerHTML='<div class="page-header"><h2>Messages</h2><p>Conversation with your team</p></div><div id="msg-list" style="max-height:60vh;overflow-y:auto"></div><div class="msg-input-wrap"><div class="flex gap-8"><input type="text" id="msg-input" placeholder="Type a message..." style="flex:1;padding:12px 14px;background:#0a0a0a;border:1px solid #1a1a1a;color:#fff;font-size:14px;font-family:inherit;outline:none;border-radius:0" onkeydown="if(event.key==\'Enter\')sendMsg()"><button class="btn btn-accent" onclick="sendMsg()" id="msg-send-btn">Send</button></div></div>'
+      el.innerHTML='<div class="page-header"><h2>Messages</h2><p>Conversation with your team</p></div><div id="msg-list" style="max-height:60vh;overflow-y:auto"></div><div class="msg-input-wrap"><div class="flex gap-8"><input type="text" id="msg-input" placeholder="Type a message..." style="flex:1;padding:12px 14px;background:#0a0a0a;border:1px solid #1a1a1a;color:#fff;font-size:14px;font-family:inherit;outline:none;border-radius:0" onkeydown="if(event.key==\\'Enter\\')sendMsg()"><button class="btn btn-accent" onclick="sendMsg()" id="msg-send-btn">Send</button></div></div>'
       loadMessages()
       msgRefresh = setInterval(loadMessages, 8000)
     }

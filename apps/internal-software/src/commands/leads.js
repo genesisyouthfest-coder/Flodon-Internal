@@ -3,13 +3,23 @@ import { SlashCommandBuilder } from 'discord.js'
 
 
 const STAGE_EMOJI = {
-  lead:        '🔵',
-  contacted:   '📨',
-  demo:        '🎬',
-  proposal:    '📄',
-  negotiation: '🤝',
-  won:         '✅',
-  lost:        '❌',
+  prospect:              '🔵',
+  contacted:             '📨',
+  replied:               '💬',
+  discovery_booked:      '📅',
+  discovery_completed:   '🔍',
+  audit_proposed:        '📄',
+  audit_purchased:       '💰',
+  audit_delivered:       '📊',
+  implementation_proposed: '🤝',
+  client:                '✅',
+  nurture:               '🌱',
+  lost:                  '❌',
+  lead:                  '🔵',
+  demo:                  '🎬',
+  proposal:              '📄',
+  negotiation:           '🤝',
+  won:                   '✅',
 }
 
 const SOURCE_EMOJI = {
@@ -27,14 +37,19 @@ export default {
     .addStringOption(o =>
       o.setName('stage').setDescription('Filter by pipeline stage').setRequired(false)
         .addChoices(
-          { name: 'All Stages',   value: 'all'         },
-          { name: 'Lead',         value: 'lead'        },
-          { name: 'Contacted',    value: 'contacted'   },
-          { name: 'Demo',         value: 'demo'        },
-          { name: 'Proposal',     value: 'proposal'    },
-          { name: 'Negotiation',  value: 'negotiation' },
-          { name: 'Won',          value: 'won'         },
-          { name: 'Lost',         value: 'lost'        },
+          { name: 'All Stages',              value: 'all'                   },
+          { name: 'Prospect',                value: 'prospect'              },
+          { name: 'Contacted',               value: 'contacted'             },
+          { name: 'Replied',                 value: 'replied'               },
+          { name: 'Discovery Booked',        value: 'discovery_booked'      },
+          { name: 'Discovery Completed',     value: 'discovery_completed'   },
+          { name: 'Audit Proposed',          value: 'audit_proposed'        },
+          { name: 'Audit Purchased',         value: 'audit_purchased'       },
+          { name: 'Audit Delivered',         value: 'audit_delivered'       },
+          { name: 'Implementation Proposed', value: 'implementation_proposed' },
+          { name: 'Client',                  value: 'client'                },
+          { name: 'Nurture',                 value: 'nurture'               },
+          { name: 'Lost',                    value: 'lost'                  },
         )
     )
     .addStringOption(o =>

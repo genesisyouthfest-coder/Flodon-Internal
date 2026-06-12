@@ -1,7 +1,7 @@
 import { Client, GatewayIntentBits, Collection } from 'discord.js'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
-import { readdirSync } from 'fs'
+import { readdirSync, readFileSync } from 'fs'
 import http from 'http'
 import {
   supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed,
@@ -55,7 +55,8 @@ import { getPortalHTML } from './portalUI.js'
 import { handleCRMRequest } from './crm.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const PORT = process.env.API_PORT || 10001
+const crmClientJs = readFileSync(join(__dirname, 'crmClient.js'), 'utf8')
+const PORT = process.env.API_PORT || 10011
 
 const tagRole = (roleId) => roleId.startsWith('<@&') ? roleId : `<@&${roleId}>`
 
@@ -428,10 +429,10 @@ http.createServer(async (req, res) => {
     return res.end('Too Many Requests')
   }
 
-  // Dashboard
+  // Redirect root to CRM
   if (method === 'GET' && (url === '/' || url === '/dashboard')) {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    return res.end(getDashboardHTML())
+    res.writeHead(302, { Location: '/crm' })
+    return res.end()
   }
 
   // Settings
@@ -632,9 +633,15 @@ http.createServer(async (req, res) => {
 
   // CRM API routes
   if (url.startsWith('/crm/api/')) {
-    const body = method !== 'GET' ? JSON.parse(await readBody(req)) : null
+    const body = method !== 'GET' ? await getBody(req) : null
     const handled = await handleCRMRequest(req, res, url, method, body)
     if (handled) return
+  }
+
+  // CRM static assets
+  if (method === 'GET' && url === '/crm/client.js') {
+    res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' })
+    return res.end(crmClientJs)
   }
 
   // CRM Dashboard Pages

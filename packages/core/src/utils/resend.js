@@ -290,7 +290,7 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
 
     const revenue = q.monthlyRevenue || ''
     const isUnqualified = revenue.includes('<') || revenue.includes('0-') || revenue.toLowerCase().includes('just starting')
-    const initialStage = isUnqualified ? 'nurture' : 'call_booked'
+    const initialStage = isUnqualified ? 'nurture' : 'discovery_booked'
     const isNurture = isUnqualified
 
     // 1. Check if client exists
@@ -308,7 +308,7 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
         .update({
           name,
           phone,
-          source_url: website,
+          website,
           pipeline_stage: initialStage,
           is_nurture: isNurture,
           lead_source: q.leadSources || q.leadSource || 'website',
@@ -327,14 +327,7 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
       client = data
       log(`[Webhook DB] Updated existing client (id=${client.id})`)
     } else {
-      // Get admin profile name
       const adminId = '00000000-0000-0000-0000-000000000001'
-      const { data: adminProfile } = await supabase
-        .from('profiles')
-        .select('full_name')
-        .eq('id', adminId)
-        .maybeSingle()
-      const addedByName = adminProfile?.full_name || 'CRM Admin'
       const service = payload.service || q.service || payload.eventTitle || 'General'
 
       // Create new client
@@ -344,7 +337,7 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
           name,
           email,
           phone,
-          source_url: website,
+          website,
           pipeline_stage: initialStage,
           is_nurture: isNurture,
           lead_source: q.leadSources || q.leadSource || 'website',
@@ -352,7 +345,6 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
           qualification,
           notes: q.biggestBottleneck || null,
           added_by: adminId,
-          added_by_name: addedByName,
           service: service
         })
         .select()
@@ -458,7 +450,7 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
           action: 'stage_changed',
           entity_type: 'client',
           entity_id: client.id,
-          metadata: { from: 'call_booked', to: 'lost', reason: payload.reason || 'Cancelled' },
+          metadata: { from: 'discovery_booked', to: 'lost', reason: payload.reason || 'Cancelled' },
           profile_id: '00000000-0000-0000-0000-000000000001'
         })
 

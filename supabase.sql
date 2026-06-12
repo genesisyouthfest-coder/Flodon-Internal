@@ -78,10 +78,11 @@ CREATE TABLE IF NOT EXISTS public.clients (
   email           TEXT,
   phone           TEXT,
   website         TEXT,
-  pipeline_stage  TEXT DEFAULT 'lead',
+  pipeline_stage  TEXT DEFAULT 'prospect',
   lead_source     TEXT DEFAULT 'website',
   source          TEXT DEFAULT 'manual',
   qualification   JSONB DEFAULT '{}',
+  pipeline_data   JSONB DEFAULT '{}',
   booked_date     TEXT,
   booked_start    TEXT,
   booked_end      TEXT,
@@ -153,12 +154,25 @@ CREATE TABLE IF NOT EXISTS public.deals (
   logged_by_id    TEXT,
   logged_at       TIMESTAMPTZ DEFAULT NOW(),
   created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ DEFAULT NOW()
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  cogs_monthly    NUMERIC DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_deals_logged_at ON public.deals(logged_at);
 
--- ─── 4.2 CALLS ───────────────────────────────────────────────────────────────
+-- ─── 4.2 EXPENSES ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  amount          NUMERIC NOT NULL DEFAULT 0,
+  category        TEXT NOT NULL DEFAULT 'other',
+  description     TEXT,
+  date            DATE NOT NULL DEFAULT CURRENT_DATE,
+  created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON public.expenses(date);
+
+-- ─── 4.3 CALLS ───────────────────────────────────────────────────────────────
 -- Used by: /call, warroom call stats, CRM calls
 CREATE TABLE IF NOT EXISTS public.calls (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -769,8 +783,17 @@ CREATE TABLE IF NOT EXISTS public.settings (
 --  13. SCHEMA ENHANCEMENTS — ALTER TABLE additions
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Backfill logged_at from created_at for existing deals
-UPDATE public.deals SET logged_at = created_at WHERE logged_at IS NULL;
+-- deals: older projects only had logged_at / updated_at — add created_at if missing
+ALTER TABLE public.deals ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.deals ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Backfill timestamp columns from whichever legacy column exists
+UPDATE public.deals
+SET
+  created_at = COALESCE(created_at, logged_at, updated_at, NOW()),
+  updated_at = COALESCE(updated_at, logged_at, created_at, NOW()),
+  logged_at  = COALESCE(logged_at, created_at, updated_at, NOW())
+WHERE created_at IS NULL OR updated_at IS NULL OR logged_at IS NULL;
 
 -- Enhanced full-text search index for knowledge base articles
 CREATE INDEX IF NOT EXISTS idx_kb_articles_search
@@ -829,56 +852,79 @@ ALTER TABLE project_milestones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE portal_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE portal_documents ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Auth users can manage auth tokens"
-  ON portal_auth_tokens FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Auth users can manage sessions"
-  ON portal_sessions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Auth users can manage projects"
-  ON projects FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Auth users can manage milestones"
-  ON project_milestones FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Auth users can manage messages"
-  ON portal_messages FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Auth users can manage documents"
-  ON portal_documents FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage auth tokens' AND tablename = 'portal_auth_tokens') THEN
+    CREATE POLICY "Auth users can manage auth tokens" ON portal_auth_tokens FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage sessions' AND tablename = 'portal_sessions') THEN
+    CREATE POLICY "Auth users can manage sessions" ON portal_sessions FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage projects' AND tablename = 'projects') THEN
+    CREATE POLICY "Auth users can manage projects" ON projects FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage milestones' AND tablename = 'project_milestones') THEN
+    CREATE POLICY "Auth users can manage milestones" ON project_milestones FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage messages' AND tablename = 'portal_messages') THEN
+    CREATE POLICY "Auth users can manage messages" ON portal_messages FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage documents' AND tablename = 'portal_documents') THEN
+    CREATE POLICY "Auth users can manage documents" ON portal_documents FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
 
 -- ─── Knowledge Base Tables ───────────────────────────────────────────────────
 ALTER TABLE kb_articles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE kb_categories ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Anyone can read published articles"
-  ON kb_articles FOR SELECT USING (status = 'published');
-CREATE POLICY "Auth users can read all articles"
-  ON kb_articles FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Auth users can insert articles"
-  ON kb_articles FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "Auth users can update articles"
-  ON kb_articles FOR UPDATE TO authenticated USING (true);
-CREATE POLICY "Auth users can delete articles"
-  ON kb_articles FOR DELETE TO authenticated USING (true);
-CREATE POLICY "Auth users can read categories"
-  ON kb_categories FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Auth users can insert categories"
-  ON kb_categories FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "Auth users can update categories"
-  ON kb_categories FOR UPDATE TO authenticated USING (true);
-CREATE POLICY "Auth users can delete categories"
-  ON kb_categories FOR DELETE TO authenticated USING (true);
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can read published articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Anyone can read published articles" ON kb_articles FOR SELECT USING (status = 'published'); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can read all articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Auth users can read all articles" ON kb_articles FOR SELECT TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can insert articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Auth users can insert articles" ON kb_articles FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can update articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Auth users can update articles" ON kb_articles FOR UPDATE TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can delete articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Auth users can delete articles" ON kb_articles FOR DELETE TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can read categories' AND tablename = 'kb_categories') THEN CREATE POLICY "Auth users can read categories" ON kb_categories FOR SELECT TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can insert categories' AND tablename = 'kb_categories') THEN CREATE POLICY "Auth users can insert categories" ON kb_categories FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can update categories' AND tablename = 'kb_categories') THEN CREATE POLICY "Auth users can update categories" ON kb_categories FOR UPDATE TO authenticated USING (true); END IF; END $$;
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can delete categories' AND tablename = 'kb_categories') THEN CREATE POLICY "Auth users can delete categories" ON kb_categories FOR DELETE TO authenticated USING (true); END IF; END $$;
 
 -- ─── Time Tracking Tables ────────────────────────────────────────────────────
 ALTER TABLE public.time_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.timers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.time_reports ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Auth users can manage time entries"
-  ON public.time_entries FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Auth users can manage timers"
-  ON public.timers FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Auth users can manage time reports"
-  ON public.time_reports FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage time entries' AND tablename = 'time_entries') THEN
+    CREATE POLICY "Auth users can manage time entries" ON public.time_entries FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage timers' AND tablename = 'timers') THEN
+    CREATE POLICY "Auth users can manage timers" ON public.timers FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can manage time reports' AND tablename = 'time_reports') THEN
+    CREATE POLICY "Auth users can manage time reports" ON public.time_reports FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  16. SEED DATA
+--  16. MIGRATIONS (for existing databases)
+-- ═══════════════════════════════════════════════════════════════════════════════
+ALTER TABLE public.deals ADD COLUMN IF NOT EXISTS cogs_monthly NUMERIC DEFAULT 0;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--  17. SEED DATA
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ─── Default Admin Profile ───────────────────────────────────────────────────
