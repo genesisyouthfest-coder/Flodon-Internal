@@ -92,93 +92,145 @@ async function queryExpenses() {
   }
 }
 
-async function getDashboardStats() {
+const $n = v => isNaN(v) ? 0 : Number(v)
+
+function getMonthRange(monthStr) {
+  if (monthStr) {
+    const [y, m] = monthStr.split('-').map(Number)
+    const start = new Date(y, m - 1, 1)
+    const end = new Date(y, m, 1)
+    return { start, end }
+  }
   const now = new Date()
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const start = new Date(now.getFullYear(), now.getMonth(), 1)
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+  return { start, end }
+}
+
+/**
+ * All deal amounts are total deal values (not monthly).
+ * MRR = total value of deals closed in the selected month
+ * ARR = total value of all deals closed in the current year
+ */
+async function getDashboardStats(monthStr) {
+  const now = new Date()
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(monthStr)
+  const startOfYear = new Date(now.getFullYear(), 0, 1)
+  const endOfYear = new Date(now.getFullYear() + 1, 0, 1)
   const startOfWeek = new Date(now)
   startOfWeek.setDate(now.getDate() - now.getDay())
   startOfWeek.setHours(0, 0, 0, 0)
 
-  // Helper: parse numeric, default 0
-  const $n = v => isNaN(v) ? 0 : Number(v)
-
-  // ── Safe query: no unknown columns (cogs_monthly may not exist yet) ──
+  // ── Safe query helpers ──
   let allDeals, closedWonThisMonth, closedWonCount, closedLostCount
   let newClientsThisWeek, newClientsThisMonth, emailQueueRows
   let overdueTasks, followupClients, nurtureClients, recentActivity
   let clientsByStage, totalClients, allClients
 
+  async function qDeals(select, fn) {
+    const q = supabase.from('deals').select(select)
+    if (fn) fn(q)
+    const { data, error } = await q
+    if (error) throw error
+    return data || []
+  }
+
   try {
-    const results = await Promise.all([
-      supabase.from('deals').select('amount_monthly, stage, created_at'),
-      supabase.from('deals').select('amount_monthly').eq('stage', 'closed_won').gte('updated_at', startOfMonth.toISOString()),
+    const [d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14] = await Promise.all([
+      qDeals('amount_monthly, stage, created_at, client_id', q => q),
+      qDeals('amount_monthly, client_id, updated_at', q => q.eq('stage', 'closed_won').gte('updated_at', startOfMonth.toISOString()).lt('updated_at', endOfMonth.toISOString())),
       supabase.from('deals').select('id', { count: 'exact', head: true }).eq('stage', 'closed_won'),
       supabase.from('deals').select('id', { count: 'exact', head: true }).eq('stage', 'closed_lost'),
       supabase.from('clients').select('id', { count: 'exact', head: true }).gte('created_at', startOfWeek.toISOString()),
-      supabase.from('clients').select('id', { count: 'exact', head: true }).gte('created_at', startOfMonth.toISOString()),
+      supabase.from('clients').select('id', { count: 'exact', head: true }).gte('created_at', startOfMonth.toISOString()).lt('created_at', endOfMonth.toISOString()),
       supabase.from('email_queue').select('status'),
       supabase.from('tasks').select('id', { count: 'exact', head: true }).lt('deadline', now.toISOString()).neq('status', 'done'),
       supabase.from('clients').select('id', { count: 'exact', head: true }).eq('pipeline_stage', 'followup'),
       supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_nurture', true),
-      supabase
-        .from('activity_log')
-        .select('id, action, entity_type, entity_id, metadata, created_at, profiles(full_name)')
-        .order('created_at', { ascending: false })
-        .limit(10),
+      supabase.from('activity_log').select('id, action, entity_type, entity_id, metadata, created_at, profiles(full_name)').order('created_at', { ascending: false }).limit(10),
       supabase.from('clients').select('pipeline_stage'),
       supabase.from('clients').select('id', { count: 'exact', head: true }),
-      supabase.from('clients').select('pipeline_stage, lead_source, industry, service, is_nurture'),
+      supabase.from('clients').select('id, pipeline_stage, lead_source, industry, service, is_nurture'),
     ])
-    allDeals = results[0]?.data || []
-    closedWonThisMonth = results[1]?.data || []
-    closedWonCount = results[2]?.count || 0
-    closedLostCount = results[3]?.count || 0
-    newClientsThisWeek = results[4]?.count || 0
-    newClientsThisMonth = results[5]?.count || 0
-    emailQueueRows = results[6]?.data || []
-    overdueTasks = results[7]?.count || 0
-    followupClients = results[8]?.count || 0
-    nurtureClients = results[9]?.count || 0
-    recentActivity = results[10]?.data || []
-    clientsByStage = results[11]?.data || []
-    totalClients = results[12]?.count || 0
-    allClients = results[13]?.data || []
+    allDeals = d1
+    closedWonThisMonth = d2
+    closedWonCount = d3?.count || 0
+    closedLostCount = d4?.count || 0
+    newClientsThisWeek = d5?.count || 0
+    newClientsThisMonth = d6?.count || 0
+    emailQueueRows = d7?.data || []
+    overdueTasks = d8?.count || 0
+    followupClients = d9?.count || 0
+    nurtureClients = d10?.count || 0
+    recentActivity = d11?.data || []
+    clientsByStage = d12?.data || []
+    totalClients = d13?.count || 0
+    allClients = d14?.data || []
   } catch (e) {
     // fall through with empty defaults
   }
 
-  // ── COGS — fetched separately in case column doesn't exist ──
+  // ── COGS — fetched separately ──
   let totalCOGS = 0
   try {
-    const { data: cogsRows } = await supabase.from('deals').select('cogs_monthly, amount_monthly, stage')
+    const { data: cogsRows } = await supabase.from('deals').select('cogs_monthly, amount_monthly, stage, client_id')
     const wonRows = (cogsRows || []).filter(d => d.stage === 'closed_won')
     totalCOGS = wonRows.reduce((s, d) => s + $n(d.cogs_monthly || 0), 0)
   } catch (e) {
     // cogs_monthly column may not exist yet
   }
 
-  // Expenses — fetched separately in case table doesn't exist yet
+  // Expenses — fetched separately
   let thisMonthExpenses = []
   try {
     const expenses = await queryExpenses()
-    thisMonthExpenses = (expenses || []).filter(r => r.date >= startOfMonth.toISOString().slice(0,10))
+    const monthStartStr = startOfMonth.toISOString().slice(0, 10)
+    const monthEndStr = endOfMonth.toISOString().slice(0, 10)
+    thisMonthExpenses = (expenses || []).filter(r => r.date >= monthStartStr && r.date < monthEndStr)
   } catch (e) {
     // expenses table may not exist yet
   }
 
+  // ── Exclude deals belonging to lost/churned clients ──
+  const lostClientIds = new Set((allClients || []).filter(c => c.pipeline_stage === 'lost').map(c => c.id))
+  const latestDealPerClient = {}
+  for (const d of allDeals || []) {
+    if (!d.client_id) continue
+    const prev = latestDealPerClient[d.client_id]
+    if (!prev || new Date(d.created_at) > new Date(prev.created_at)) {
+      latestDealPerClient[d.client_id] = d
+    }
+  }
+  for (const [cid, deal] of Object.entries(latestDealPerClient)) {
+    if (deal.stage === 'closed_lost') lostClientIds.add(cid)
+  }
+  const isActiveClient = d => d.client_id ? !lostClientIds.has(d.client_id) : true
+
   // ── Pipeline (open) deals ──
   const openDeals = (allDeals || []).filter(d => !DEAL_CLOSED_STAGES.includes(d.stage))
   const pipelineValue = openDeals.reduce((sum, d) => sum + $n(d.amount_monthly), 0)
-  // Total MRR = all closed_won deals
-  const totalMRR = (allDeals || []).filter(d => d.stage === 'closed_won').reduce((sum, d) => sum + $n(d.amount_monthly), 0)
+
+  // MRR = total value of closed_won deals in the selected month (active clients only)
+  const activeWonDeals = (allDeals || []).filter(d => d.stage === 'closed_won' && isActiveClient(d))
+  const monthWon = activeWonDeals.filter(d => {
+    const t = new Date(d.updated_at || d.created_at)
+    return t >= startOfMonth && t < endOfMonth
+  })
+  const totalMRR = monthWon.reduce((sum, d) => sum + $n(d.amount_monthly), 0)
+
+  // ARR = total value of all closed_won deals in the current year
+  const yearWon = activeWonDeals.filter(d => {
+    const t = new Date(d.updated_at || d.created_at)
+    return t >= startOfYear && t < endOfYear
+  })
+  const arr = yearWon.reduce((sum, d) => sum + $n(d.amount_monthly), 0)
+
   const grossProfit = totalMRR - totalCOGS
   const grossMargin = totalMRR > 0 ? (grossProfit / totalMRR) * 100 : 0
 
   const totalExpenses = (thisMonthExpenses || []).reduce((sum, r) => sum + $n(r.amount), 0)
   const netProfit = grossProfit - totalExpenses
   const netMargin = totalMRR > 0 ? (netProfit / totalMRR) * 100 : 0
-
-  const arr = totalMRR * 12
 
   // ── Deal counts ──
   const dealsByStage = {}
@@ -198,12 +250,11 @@ async function getDashboardStats() {
   const conversionRate = totalClosed > 0 ? ($n(closedWonCount) / totalClosed) * 100 : 0
 
   // ── Averages ──
-  const wonDeals = (allDeals || []).filter(d => d.stage === 'closed_won')
-  const avgDealSize = wonDeals.length > 0
-    ? wonDeals.reduce((sum, d) => sum + $n(d.amount_monthly), 0) / wonDeals.length
+  const avgDealSize = activeWonDeals.length > 0
+    ? activeWonDeals.reduce((sum, d) => sum + $n(d.amount_monthly), 0) / activeWonDeals.length
     : 0
-  const avgCOGS = totalCOGS > 0 && wonDeals.length > 0
-    ? totalCOGS / wonDeals.length
+  const avgCOGS = totalCOGS > 0 && activeWonDeals.length > 0
+    ? totalCOGS / activeWonDeals.length
     : 0
 
   // ── Churn rate (clients lost this month / total clients at start) ──
@@ -272,6 +323,10 @@ async function getDashboardStats() {
     clients_by_service: byService,
     clients_in_pipeline: activeClients,
     clients_lost: lostThisMonth,
+
+    // Selected month info
+    selected_month: monthStr || (now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0')),
+    date_added: new Date().toISOString(),
 
     // Legacy snake_case aliases
     pipeline_value: pipelineValue,
@@ -654,6 +709,7 @@ async function getPipeline() {
     .from('deals')
     .select('id, title, amount_monthly, stage, probability, expected_close, updated_at, custom_offer, clients(name)')
     .order('updated_at', { ascending: false })
+  if (error) throw error
 
   if (error) throw error
 
@@ -676,15 +732,72 @@ async function getPipeline() {
   return pipeline
 }
 
+async function getMonthlyTrend() {
+  const months = []
+  const now = new Date()
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const monthStr = `${y}-${m}`
+    const startISO = d.toISOString()
+    const endD = new Date(y, d.getMonth() + 1, 1)
+    const endISO = endD.toISOString()
+    months.push({ month: monthStr, start: startISO, end: endISO })
+  }
+
+  let trendDeals, trendClients, trendExpenses
+  try {
+    const { data, error } = await supabase.from('deals').select('amount_monthly, stage, created_at')
+    if (error) throw error
+    trendDeals = data || []
+  } catch (e) { trendDeals = [] }
+  try {
+    const { data, error } = await supabase.from('clients').select('id, created_at')
+    if (error) throw error
+    trendClients = data || []
+  } catch (e) { trendClients = [] }
+  try {
+    const { data, error } = await supabase.from('expenses').select('amount, date')
+    if (error) throw error
+    trendExpenses = data || []
+  } catch (e) { trendExpenses = [] }
+
+  return months.map(({ month, start, end }) => {
+    const monthMRR = (trendDeals || [])
+      .filter(d => d.stage === 'closed_won' && d.created_at >= start && d.created_at < end)
+      .reduce((s, d) => s + $n(d.amount_monthly), 0)
+    const newClients = (trendClients || [])
+      .filter(c => c.created_at >= start && c.created_at < end)
+      .length
+    const monthExpenses = (trendExpenses || [])
+      .filter(r => r.date >= start.slice(0, 10) && r.date < end.slice(0, 10))
+      .reduce((s, r) => s + $n(r.amount), 0)
+    return {
+      month,
+      mrr: monthMRR,
+      new_clients: newClients,
+      expenses: monthExpenses,
+    }
+  })
+}
+
 export async function handleCRMRequest(req, res, url, method, body) {
   if (!url.startsWith('/crm')) return false
 
   const { pathname, query } = parseUrl(url)
 
   try {
-    // GET /crm/api/dashboard-stats
+    // GET /crm/api/dashboard-stats[?month=YYYY-MM]
     if (method === 'GET' && pathname === '/crm/api/dashboard-stats') {
-      const data = await getDashboardStats()
+      const month = query.get('month') || undefined
+      const data = await getDashboardStats(month)
+      return json(res, 200, { success: true, data })
+    }
+
+    // GET /crm/api/monthly-trend
+    if (method === 'GET' && pathname === '/crm/api/monthly-trend') {
+      const data = await getMonthlyTrend()
       return json(res, 200, { success: true, data })
     }
 
@@ -879,3 +992,6 @@ export async function handleCRMRequest(req, res, url, method, body) {
     return true
   }
 }
+
+// Run schema migrations on startup (swallows errors for missing exec_sql)
+ensureSchemaTables().catch(() => {})

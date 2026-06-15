@@ -125,16 +125,44 @@ var API = window.location.origin + '/crm/api'
       el.innerHTML=html
     }
 
+    // ─── Month picker state ───
+    var selectedMonth = (function(){
+      var d=new Date()
+      return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')
+    })()
+    function renderMonthSelector(){
+      var now=new Date()
+      var options=''
+      for(var i=5;i>=-1;i--){
+        var d=new Date(now.getFullYear(),now.getMonth()-i,1)
+        var y=d.getFullYear()
+        var m=String(d.getMonth()+1).padStart(2,'0')
+        var val=y+'-'+m
+        var label=d.toLocaleDateString('en-US',{month:'long',year:'numeric'})
+        options+='<option value="'+val+'"'+(val===selectedMonth?' selected':'')+'>'+label+'</option>'
+      }
+      return '<select id="month-picker" class="form-select" style="width:auto;display:inline-block" onchange="selectedMonth=this.value;renderDashboard()">'+options+'</select>'
+    }
+    function formatMonth(m){
+      if(!m)return''
+      var parts=m.split('-')
+      var d=new Date(parseInt(parts[0]),parseInt(parts[1])-1,1)
+      return d.toLocaleDateString('en-US',{month:'short',year:'numeric'})
+    }
+
     // ─── DASHBOARD ───
     function renderDashboard(){
       var el=document.getElementById('main-content')
       el.innerHTML=
-        '<div class="page-header"><h2>Dashboard</h2></div>'+
+        '<div class="page-header"><h2>Dashboard</h2><div style="display:flex;align-items:center;gap:8px">'+
+          '<label style="font-size:12px;color:var(--text-muted)">Month:</label>'+renderMonthSelector()+
+        '</div></div>'+
         '<div class="metric-strip" id="dash-stats"></div>'+
         '<div class="grid-2"><div class="card"><div class="card-title">Revenue Overview</div><div id="dash-revenue"></div></div><div class="card"><div class="card-title">Cost Analysis</div><div id="dash-costs"></div></div></div>'+
         '<div class="grid-2"><div class="card" style="padding:0"><div class="arr-visual" id="dash-arr"><div class="empty-state">Loading...</div></div></div><div class="card"><div class="card-title">Pipeline Distribution</div><div id="dash-status-bars"></div></div></div>'+
         '<div class="grid-3"><div class="card"><div class="card-title">Sales Analytics</div><div id="dash-sales"></div></div><div class="card"><div class="card-title">Client Pipeline</div><div id="dash-client-chart"></div></div><div class="card"><div class="card-title">Client Breakdown</div><div id="dash-breakdown"></div></div></div>'+
-        '<div class="card"><div class="card-title">Deal Pipeline</div><div id="dash-deal-chart"><div class="empty-state">Loading...</div></div></div>'
+        '<div class="card"><div class="card-title">Deal Pipeline</div><div id="dash-deal-chart"><div class="empty-state">Loading...</div></div></div>'+
+        '<div class="card" style="margin-top:16px"><div class="card-title">Monthly Trend (12 months)</div><div id="dash-monthly-trend"></div></div>'
       showLoader(document.getElementById('dash-stats'),12,'stat')
       showLoader(document.getElementById('dash-revenue'),4,'row')
       showLoader(document.getElementById('dash-costs'),4,'row')
@@ -144,11 +172,13 @@ var API = window.location.origin + '/crm/api'
       showLoader(document.getElementById('dash-breakdown'),4,'row')
 
       Promise.allSettled([
-        api('GET','/dashboard-stats'),
+        api('GET','/dashboard-stats?month='+selectedMonth),
         api('GET','/pipeline'),
+        api('GET','/monthly-trend'),
       ]).then(function(results){
         var data=settledValue(results[0],{})||{}
         var pipeline=settledValue(results[1],{})||{}
+        var monthlyTrend=settledValue(results[2],[])||[]
         var deals=flattenPipeline(pipeline)
         var pipelineValue=data.pipeline_value?data.pipeline_value:sum(deals,function(d){return d.amount_monthly})
         var weighted=sum(deals,function(d){return (d.amount_monthly||0)*((d.probability||0)/100)})
@@ -176,18 +206,19 @@ var API = window.location.origin + '/crm/api'
         var churn=data.churn_rate||0
 
         // ── Top KPI Strip ──
+        var monthLabel=formatMonth(selectedMonth)
         document.getElementById('dash-stats').innerHTML=
-          '<div class="metric-card"><div class="metric-label">MRR</div><div class="metric-value">'+fmtINR(mrr)+'</div><div class="metric-sub">Monthly recurring</div></div>'+
+          '<div class="metric-card"><div class="metric-label">MRR</div><div class="metric-value">'+fmtINR(mrr)+'</div><div class="metric-sub">'+monthLabel+'</div></div>'+
           '<div class="metric-card"><div class="metric-label">ARR</div><div class="metric-value">'+fmtINR(arr)+'</div><div class="metric-sub">Annual run rate</div></div>'+
           '<div class="metric-card"><div class="metric-label">Gross Profit</div><div class="metric-value">'+fmtINR(gp)+'</div><div class="metric-sub" style="color:'+(gm>=40?'var(--green)':'var(--red)')+'">'+gm+'% margin</div></div>'+
           '<div class="metric-card"><div class="metric-label">Net Profit</div><div class="metric-value">'+fmtINR(np)+'</div><div class="metric-sub" style="color:'+(nm>=20?'var(--green)':'var(--red)')+'">'+nm+'% margin</div></div>'+
-          '<div class="metric-card"><div class="metric-label">Total Clients</div><div class="metric-value">'+(data.total_clients||0)+'</div><div class="metric-sub">'+newMonth+' new this month</div></div>'+
+          '<div class="metric-card"><div class="metric-label">Total Clients</div><div class="metric-value">'+(data.total_clients||0)+'</div><div class="metric-sub">'+newMonth+' new in '+monthLabel+'</div></div>'+
           '<div class="metric-card"><div class="metric-label">Win Rate</div><div class="metric-value">'+(data.conversion_rate||0)+'%</div><div class="metric-sub">'+wonCount+' won</div></div>'+
           '<div class="metric-card"><div class="metric-label">Avg Deal</div><div class="metric-value">'+fmtINR(avgDeal)+'</div><div class="metric-sub">Per closed deal</div></div>'+
           '<div class="metric-card"><div class="metric-label">Churn Rate</div><div class="metric-value" style="color:'+(churn>5?'var(--red)':'var(--green)')+'">'+churn+'%</div><div class="metric-sub">'+openDeals+' active</div></div>'+
           '<div class="metric-card"><div class="metric-label">Closed Won</div><div class="metric-value">'+fmtINR(data.closed_won_value||0)+'</div><div class="metric-sub">'+wonCount+' deals</div></div>'+
           '<div class="metric-card"><div class="metric-label">Total Deals</div><div class="metric-value">'+totalDeals+'</div><div class="metric-sub">'+closedLost+' lost</div></div>'+
-          '<div class="metric-card"><div class="metric-label">New Clients</div><div class="metric-value">'+newMonth+'</div><div class="metric-sub">'+newWeek+' this week</div></div>'+
+          '<div class="metric-card"><div class="metric-label">New Clients</div><div class="metric-value">'+newMonth+'</div><div class="metric-sub">'+monthLabel+'</div></div>'+
           '<div class="metric-card"><div class="metric-label">Follow-up</div><div class="metric-value">'+followup+'</div><div class="metric-sub">'+nurture+' nurturing</div></div>'
 
         // ── Revenue Overview ──
@@ -218,7 +249,8 @@ var API = window.location.origin + '/crm/api'
             var stageDeals=pipeline[stage]||[]
             var amount=sum(stageDeals,function(d){return d.amount_monthly})
             var pct=mrr?Math.max(4,Math.round(amount/mrr*100)):0
-            return '<div class="mini-bar-row"><span>'+stageLabel(stage)+'</span><div class="mini-bar-track"><div class="mini-bar-fill" style="width:'+pct+'%"></div></div><strong>'+compactMoney(amount)+'</strong></div>'
+            var isRecurring=stageDeals.every(function(d){return d.is_recurring})
+          return '<div class="mini-bar-row"><span>'+stageLabel(stage)+'</span><div class="mini-bar-track"><div class="mini-bar-fill" style="width:'+pct+'%"></div></div><strong>'+compactMoney(amount)+'</strong>'+(isRecurring?'<span class="text-muted text-xs" style="margin-left:2px">/mo</span>':'')+'</div>'
           }).join('')+'</div>'
 
         // ── Pipeline Distribution ──
@@ -282,6 +314,36 @@ var API = window.location.origin + '/crm/api'
           '<button class="btn btn-sm btn-accent" onclick="renderDeals()">View All Deals</button>'+
           '<button class="btn btn-sm btn-secondary" onclick="openDealForm()">New Deal</button>'+
         '</div>'
+
+        // ── Monthly Trend Chart ──
+        if(monthlyTrend&&monthlyTrend.length){
+          var maxMrr=Math.max(1,...monthlyTrend.map(function(t){return t.mrr}))
+          var maxClients=Math.max(1,...monthlyTrend.map(function(t){return t.new_clients}))
+          document.getElementById('dash-monthly-trend').innerHTML=
+            '<div style="overflow-x:auto">'+
+            '<table class="table" style="width:100%;font-size:12px"><thead><tr>'+
+              '<th>Month</th>'+
+              '<th style="text-align:right">MRR</th>'+
+              '<th style="text-align:right">New Clients</th>'+
+              '<th style="text-align:right">Expenses</th>'+
+              '<th style="width:40%">MRR Trend</th>'+
+            '</tr></thead><tbody>'+
+            monthlyTrend.map(function(t){
+              var barPct=Math.max(2,Math.round(t.mrr/maxMrr*100))
+              var clientBar=Math.max(2,Math.round(t.new_clients/maxClients*100))
+              return '<tr>'+
+                '<td style="white-space:nowrap">'+formatMonth(t.month)+'</td>'+
+                '<td style="text-align:right;font-weight:600">'+fmtINR(t.mrr)+'</td>'+
+                '<td style="text-align:right">'+t.new_clients+' <span style="display:inline-block;width:40px;height:8px;background:var(--border);border-radius:4px;vertical-align:middle;margin-left:4px"><span style="display:block;height:100%;width:'+clientBar+'%;background:var(--accent);border-radius:4px"></span></span></td>'+
+                '<td style="text-align:right">'+fmtINR(t.expenses)+'</td>'+
+                '<td><div style="height:16px;background:var(--border);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+barPct+'%;background:var(--green);border-radius:4px;transition:width 0.3s"></div></div></td>'+
+              '</tr>'
+            }).join('')+
+            '</tbody></table></div>'+
+            '<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">Data as of '+new Date().toLocaleString()+'</div>'
+        }else{
+          document.getElementById('dash-monthly-trend').innerHTML='<div class="empty-state">No trend data available</div>'
+        }
       }).catch(function(e){el.innerHTML='<div class="empty-state">Failed to load dashboard: '+e.message+'</div>'})
     }
 
@@ -326,7 +388,7 @@ var API = window.location.origin + '/crm/api'
         openDrawer(d.title||'Deal Details',
           '<div class="drawer-section"><div class="drawer-section-title">Deal Info</div>'+
           '<div class="detail-row"><span class="detail-label">Client</span><span class="detail-value">'+esc(d.client_name||'—')+'</span></div>'+
-          '<div class="detail-row"><span class="detail-label">Amount</span><span class="detail-value">'+fmtINR(d.amount_monthly)+'/mo</span></div>'+
+          '<div class="detail-row"><span class="detail-label">Amount</span><span class="detail-value">'+fmtINR(d.amount_monthly)+'</span></div>'+
           '<div class="detail-row"><span class="detail-label">Stage</span><span class="detail-value">'+stageBadge(d.stage)+'</span></div>'+
           '<div class="detail-row"><span class="detail-label">Probability</span><span class="detail-value">'+(d.probability||'—')+'%</span></div>'+
           '<div class="detail-row"><span class="detail-label">Expected Close</span><span class="detail-value">'+fmtDate(d.expected_close)+'</span></div>'+
@@ -722,7 +784,7 @@ var API = window.location.origin + '/crm/api'
 
     function openDealForm(){
       openModal('New Closed Deal',
-        '<div class="field"><label>Title</label><input id="df-title" placeholder="Deal title"></div><div class="field-row"><div class="field"><label>Client</label><input id="df-client" placeholder="Client name" list="client-list"><datalist id="client-list"></datalist></div><div class="field"><label>Amount</label><input id="df-amount" type="number" placeholder="5000"></div></div><div class="field-row"><div class="field"><label>Stage</label><select id="df-stage"><option value="closed_won">Closed Won</option><option value="closed_lost">Closed Lost</option></select></div><div class="field"><label>COGS (monthly)</label><input id="df-cogs" type="number" placeholder="0" value="0"></div></div>',
+        '<div class="field"><label>Title</label><input id="df-title" placeholder="Deal title"></div><div class="field-row"><div class="field"><label>Client</label><input id="df-client" placeholder="Client name" list="client-list"><datalist id="client-list"></datalist></div><div class="field"><label>Amount</label><input id="df-amount" type="number" placeholder="5000"></div></div><div class="field-row"><div class="field"><label>Stage</label><select id="df-stage"><option value="closed_won">Closed Won</option><option value="closed_lost">Closed Lost</option></select></div><div class="field"><label>COGS</label><input id="df-cogs" type="number" placeholder="0" value="0"></div></div>',
         '<button class="btn btn-primary btn-sm" onclick="saveDeal()">Create Deal</button><button class="btn btn-secondary btn-sm" onclick="closeModal()">Cancel</button>')
     }
 

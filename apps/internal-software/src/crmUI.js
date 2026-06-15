@@ -208,6 +208,14 @@ export function getCRMHTML(url) {
     .stage-pill:hover{background:var(--surface-hover);color:var(--text)}
     .stage-pill.active{background:var(--accent);color:#fff}
     .stage-pill .pill-count{display:inline-block;margin-left:4px;padding:0 5px;font-size:8px;color:var(--text-muted);background:rgba(0,0,0,0.2);border-radius:var(--radius-full)}
+    .form-select{padding:6px 14px;background:#1a1a1a;border:1px solid var(--border-light);color:#fff;font-size:12px;font-family:inherit;outline:none;border-radius:var(--radius-full);cursor:pointer;transition:all 0.2s ease-out}
+    .form-select option{background:#1a1a1a;color:#fff;padding:4px 8px}
+    .form-select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+    .table{width:100%;border-collapse:collapse;font-size:14px}
+    .table th{text-align:left;padding:10px 12px;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.04em;border-bottom:1px solid var(--border)}
+    .table td{padding:10px 12px;color:var(--text-secondary);border-bottom:1px solid var(--border);background:transparent;transition:background 0.15s ease-out}
+    .table tr:hover td{background:var(--surface-hover)}
+    .table tr:last-child td{border-bottom:none}
     .stage-pill.active .pill-count{background:rgba(255,255,255,0.12);color:rgba(255,255,255,0.6)}
     @media(max-width:1400px){.metric-strip{grid-template-columns:repeat(4,1fr)}}@media(max-width:1100px){.metric-strip{grid-template-columns:repeat(2,1fr)}}
     @media(max-width:1100px){.grid-2,.grid-3{grid-template-columns:1fr}.profile-grid{grid-template-columns:1fr}}
