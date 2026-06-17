@@ -1,6 +1,0 @@
-0000000000000000000000000000000000000000 76b4f2e58332bff691ebb73115fa28e103ba0b80 Flodon Admin <admin@flodon.in> 1777798385 +0530	commit (initial): Initial commit for Flodon Discord Bot with Heartbeat
-76b4f2e58332bff691ebb73115fa28e103ba0b80 76b4f2e58332bff691ebb73115fa28e103ba0b80 Flodon Admin <admin@flodon.in> 1777798385 +0530	Branch: renamed refs/heads/master to refs/heads/main
-76b4f2e58332bff691ebb73115fa28e103ba0b80 681747104f850f08ef19f322e8ecc593dd6fb024 Flodon Admin <admin@flodon.in> 1777800527 +0530	commit: Fix Render Blueprint: Use Environment Group for secrets
-681747104f850f08ef19f322e8ecc593dd6fb024 245c1956e026e6c4ba8bb5eb4ae49bc0e6d9e893 Flodon Admin <admin@flodon.in> 1777800615 +0530	commit: Fix Render Blueprint: Set group name to KEYS
-245c1956e026e6c4ba8bb5eb4ae49bc0e6d9e893 caf02ac8c37aeaf688fc474615abd45812f91d61 Flodon Admin <admin@flodon.in> 1777873592 +0530	commit: Bot: Added realtime listeners for Call Bookings, Cancellations, and Rejections
-caf02ac8c37aeaf688fc474615abd45812f91d61 2071c88d4abe8c8d34938e270fed8516325fc88a Flodon Admin <admin@flodon.in> 1777877444 +0530	commit: Fix: Resolved syntax error and missing export in embedBuilders

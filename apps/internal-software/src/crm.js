@@ -711,8 +711,6 @@ async function getPipeline() {
     .order('updated_at', { ascending: false })
   if (error) throw error
 
-  if (error) throw error
-
   const pipeline = {}
   for (const deal of data || []) {
     if (!pipeline[deal.stage]) pipeline[deal.stage] = []
@@ -732,11 +730,21 @@ async function getPipeline() {
   return pipeline
 }
 
-async function getMonthlyTrend() {
+function getFYRange(fy) {
+  const start = new Date(fy - 1, 3, 1)
+  const end = new Date(fy, 3, 1)
+  return { start: start.toISOString(), end: end.toISOString() }
+}
+
+async function getMonthlyTrend(fy) {
+  if (!fy) {
+    const now = new Date()
+    fy = now.getMonth() >= 3 ? now.getFullYear() + 1 : now.getFullYear()
+  }
+
   const months = []
-  const now = new Date()
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(fy - 1, 3 + i, 1)
     const y = d.getFullYear()
     const m = String(d.getMonth() + 1).padStart(2, '0')
     const monthStr = `${y}-${m}`
@@ -795,9 +803,10 @@ export async function handleCRMRequest(req, res, url, method, body) {
       return json(res, 200, { success: true, data })
     }
 
-    // GET /crm/api/monthly-trend
+    // GET /crm/api/monthly-trend[?fy=2026]
     if (method === 'GET' && pathname === '/crm/api/monthly-trend') {
-      const data = await getMonthlyTrend()
+      const fy = query.get('fy') ? parseInt(query.get('fy')) : undefined
+      const data = await getMonthlyTrend(fy)
       return json(res, 200, { success: true, data })
     }
 

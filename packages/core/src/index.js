@@ -21,12 +21,6 @@ export * from './lib/nurtureEngine.js'
 // Stripe Billing
 export * from './lib/stripeBilling.js'
 
-// Affiliate Tracking
-export * from './lib/affiliates.js'
-
-// Anomaly Detection
-export * from './lib/anomalyDetector.js'
-
 // Automated Reporting
 export * from './lib/reporting.js'
 
@@ -35,9 +29,6 @@ export * from './lib/apiKeys.js'
 
 // Rate Limiting
 export * from './lib/rateLimiter.js'
-
-// Knowledge Base
-export * from './lib/knowledgeBase.js'
 
 // Client Portal
 export * from './lib/clientPortal.js'

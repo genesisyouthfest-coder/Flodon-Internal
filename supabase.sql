@@ -11,25 +11,23 @@
 --    1.  EXTENSION
 --    2.  CORE — profiles, companies, clients
 --    3.  TAGGING — tags, taggings
---    4.  SALES — deals, calls, outreach, affiliates, referrals
+--    4.  SALES — deals, calls, outreach
 --    5.  FINANCE — payments, churn, milestones_celebrated,
 --                  stripe_customers, invoices, payment_attempts
 --    6.  OPERATIONS — tasks, activity_log, email_queue,
 --                     scheduled_reports, report_logs
---    7.  CRM INTELLIGENCE — lead_score_events, churn_predictions,
---                          anomalies, forecasts
+--    7.  CRM INTELLIGENCE — lead_score_events, churn_predictions, forecasts
 --    8.  NURTURE — nurture_sequences, nurture_steps,
 --                  nurture_subscriptions
---    9.  KNOWLEDGE BASE — kb_categories, kb_articles
---   10.  CLIENT PORTAL — portal_auth_tokens, portal_sessions,
+--    9.  CLIENT PORTAL — portal_auth_tokens, portal_sessions,
 --                        projects, project_milestones,
 --                        portal_messages, portal_documents
---   11.  TIME TRACKING — time_entries, timers, time_reports
---   12.  ACCESS & CONFIG — api_keys, dashboard_widgets, settings
---   13.  SCHEMA ENHANCEMENTS — ALTER TABLE additions
---   14.  REALTIME PUBLICATIONS
---   15.  ROW LEVEL SECURITY
---   16.  SEED DATA
+--   10.  TIME TRACKING — time_entries, timers, time_reports
+--   11.  ACCESS & CONFIG — api_keys, dashboard_widgets, settings
+--   12.  SCHEMA ENHANCEMENTS — ALTER TABLE additions
+--   13.  REALTIME PUBLICATIONS
+--   14.  ROW LEVEL SECURITY
+--   15.  SEED DATA
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -109,7 +107,7 @@ CREATE TABLE IF NOT EXISTS public.clients (
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ─── 3.1 TAGS ────────────────────────────────────────────────────────────────
--- Used by: CRM knowledge base, polymorphic labeling
+-- Used by: polymorphic labeling
 CREATE TABLE IF NOT EXISTS public.tags (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name            TEXT UNIQUE NOT NULL,
@@ -130,7 +128,7 @@ CREATE TABLE IF NOT EXISTS public.taggings (
 CREATE INDEX IF NOT EXISTS idx_taggings ON public.taggings(taggable_type, taggable_id);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  4. SALES — Deals, Calls, Outreach, Affiliates, Referrals
+--  4. SALES — Deals, Calls, Outreach
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ─── 4.1 DEALS ───────────────────────────────────────────────────────────────
@@ -210,39 +208,7 @@ CREATE TABLE IF NOT EXISTS public.outreach (
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ─── 4.4 AFFILIATES ──────────────────────────────────────────────────────────
--- Used by: referral / affiliate tracking module
-CREATE TABLE IF NOT EXISTS public.affiliates (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name            TEXT NOT NULL,
-  email           TEXT,
-  referral_code   TEXT UNIQUE NOT NULL,
-  commission_rate NUMERIC DEFAULT 0.1,
-  total_earned    NUMERIC DEFAULT 0,
-  total_paid      NUMERIC DEFAULT 0,
-  status          TEXT DEFAULT 'active',
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ DEFAULT NOW()
-);
 
--- ─── 4.5 REFERRALS ───────────────────────────────────────────────────────────
--- Used by: referral tracking, commission reconciliation
-CREATE TABLE IF NOT EXISTS public.referrals (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  affiliate_id    UUID REFERENCES public.affiliates(id) ON DELETE CASCADE,
-  referred_client_id UUID REFERENCES public.clients(id) ON DELETE CASCADE,
-  referral_code   TEXT NOT NULL,
-  status          TEXT DEFAULT 'pending',
-  commission_amount NUMERIC DEFAULT 0,
-  deal_id         UUID REFERENCES public.deals(id) ON DELETE SET NULL,
-  converted_at    TIMESTAMPTZ,
-  paid_at         TIMESTAMPTZ,
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_referrals_affiliate ON public.referrals(affiliate_id);
-CREATE INDEX IF NOT EXISTS idx_referrals_code ON public.referrals(referral_code);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 --  5. FINANCE — Payments, Churn, Milestones Celebrated,
@@ -453,23 +419,7 @@ CREATE TABLE IF NOT EXISTS public.churn_predictions (
 
 CREATE INDEX IF NOT EXISTS idx_churn_predictions_client ON public.churn_predictions(client_id);
 
--- ─── 7.3 ANOMALIES ───────────────────────────────────────────────────────────
--- Used by: anomaly detection engine and CRM alerts
-CREATE TABLE IF NOT EXISTS public.anomalies (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  metric          TEXT NOT NULL,
-  value           NUMERIC NOT NULL,
-  expected_value  NUMERIC NOT NULL,
-  deviation       NUMERIC NOT NULL,
-  severity        TEXT DEFAULT 'warning',
-  detected_at     TIMESTAMPTZ DEFAULT NOW(),
-  acknowledged    BOOLEAN DEFAULT FALSE,
-  acknowledged_by UUID REFERENCES public.profiles(id),
-  metadata        JSONB DEFAULT '{}'
-);
 
-CREATE INDEX IF NOT EXISTS idx_anomalies_metric ON public.anomalies(metric);
-CREATE INDEX IF NOT EXISTS idx_anomalies_detected ON public.anomalies(detected_at);
 
 -- ─── 7.4 FORECASTS ───────────────────────────────────────────────────────────
 -- Used by: revenue forecasting engine
@@ -532,53 +482,14 @@ CREATE TABLE IF NOT EXISTS public.nurture_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_nurture_subs_client ON public.nurture_subscriptions(client_id);
 CREATE INDEX IF NOT EXISTS idx_nurture_subs_status ON public.nurture_subscriptions(status);
 
--- ═══════════════════════════════════════════════════════════════════════════════
---  9. KNOWLEDGE BASE — Categories, Articles
--- ═══════════════════════════════════════════════════════════════════════════════
 
--- ─── 9.1 KB CATEGORIES ───────────────────────────────────────────────────────
--- Used by: knowledge base article organization
-CREATE TABLE IF NOT EXISTS kb_categories (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name        TEXT NOT NULL,
-  slug        TEXT NOT NULL UNIQUE,
-  description TEXT,
-  icon        TEXT DEFAULT 'file-text',
-  parent_id   UUID REFERENCES kb_categories(id) ON DELETE SET NULL,
-  sort_order  INT DEFAULT 0,
-  created_at  TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_kb_categories_parent ON kb_categories(parent_id);
-
--- ─── 9.2 KB ARTICLES ─────────────────────────────────────────────────────────
--- Used by: knowledge base content management
-CREATE TABLE IF NOT EXISTS kb_articles (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  title       TEXT NOT NULL,
-  slug        TEXT NOT NULL UNIQUE,
-  content     TEXT NOT NULL DEFAULT '',
-  type        TEXT NOT NULL CHECK (type IN ('playbook','faq','value_engine_msg','msg_template','email_template','sop','guide','other')),
-  category_id UUID REFERENCES kb_categories(id) ON DELETE SET NULL,
-  tags        TEXT[] DEFAULT '{}',
-  status      TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','archived')),
-  author      TEXT,
-  version     INT DEFAULT 1,
-  metadata    JSONB DEFAULT '{}',
-  created_at  TIMESTAMPTZ DEFAULT now(),
-  updated_at  TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_kb_articles_type ON kb_articles(type);
-CREATE INDEX IF NOT EXISTS idx_kb_articles_status ON kb_articles(status);
-CREATE INDEX IF NOT EXISTS idx_kb_articles_category ON kb_articles(category_id);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  10. CLIENT PORTAL — Auth Tokens, Sessions, Projects,
+--  9. CLIENT PORTAL — Auth Tokens, Sessions, Projects,
 --                       Milestones, Messages, Documents
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- ─── 10.1 PORTAL AUTH TOKENS ─────────────────────────────────────────────────
+-- ─── 9.1 PORTAL AUTH TOKENS ─────────────────────────────────────────────────
 -- Used by: magic-link authentication flow
 CREATE TABLE IF NOT EXISTS portal_auth_tokens (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -592,7 +503,7 @@ CREATE TABLE IF NOT EXISTS portal_auth_tokens (
 CREATE INDEX IF NOT EXISTS idx_portal_auth_tokens_hash ON portal_auth_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_portal_auth_tokens_client ON portal_auth_tokens(client_id);
 
--- ─── 10.2 PORTAL SESSIONS ────────────────────────────────────────────────────
+-- ─── 9.2 PORTAL SESSIONS ────────────────────────────────────────────────────
 -- Used by: authenticated portal sessions (7-day lifetime)
 CREATE TABLE IF NOT EXISTS portal_sessions (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -606,7 +517,7 @@ CREATE TABLE IF NOT EXISTS portal_sessions (
 CREATE INDEX IF NOT EXISTS idx_portal_sessions_hash ON portal_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_portal_sessions_client ON portal_sessions(client_id);
 
--- ─── 10.3 PROJECTS ───────────────────────────────────────────────────────────
+-- ─── 9.3 PROJECTS ───────────────────────────────────────────────────────────
 -- Used by: client portal project listing, CRM projects view
 CREATE TABLE IF NOT EXISTS projects (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -626,7 +537,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE INDEX IF NOT EXISTS idx_projects_client ON projects(client_id);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 
--- ─── 10.4 PROJECT MILESTONES ─────────────────────────────────────────────────
+-- ─── 9.4 PROJECT MILESTONES ─────────────────────────────────────────────────
 -- Used by: client portal milestone tracking, CRM milestone management
 CREATE TABLE IF NOT EXISTS project_milestones (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -643,7 +554,7 @@ CREATE TABLE IF NOT EXISTS project_milestones (
 
 CREATE INDEX IF NOT EXISTS idx_milestones_project ON project_milestones(project_id);
 
--- ─── 10.5 PORTAL MESSAGES ────────────────────────────────────────────────────
+-- ─── 9.5 PORTAL MESSAGES ────────────────────────────────────────────────────
 -- Used by: client <-> team messaging within portal
 CREATE TABLE IF NOT EXISTS portal_messages (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -659,7 +570,7 @@ CREATE TABLE IF NOT EXISTS portal_messages (
 CREATE INDEX IF NOT EXISTS idx_portal_messages_client ON portal_messages(client_id);
 CREATE INDEX IF NOT EXISTS idx_portal_messages_thread ON portal_messages(thread_id);
 
--- ─── 10.6 PORTAL DOCUMENTS ───────────────────────────────────────────────────
+-- ─── 9.6 PORTAL DOCUMENTS ───────────────────────────────────────────────────
 -- Used by: document sharing between client and team
 CREATE TABLE IF NOT EXISTS portal_documents (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -676,10 +587,10 @@ CREATE TABLE IF NOT EXISTS portal_documents (
 CREATE INDEX IF NOT EXISTS idx_portal_documents_client ON portal_documents(client_id);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  11. TIME TRACKING — Entries, Timers, Reports
+--  10. TIME TRACKING — Entries, Timers, Reports
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- ─── 11.1 TIME ENTRIES ───────────────────────────────────────────────────────
+-- ─── 10.1 TIME ENTRIES ───────────────────────────────────────────────────────
 -- Used by: timesheet view, billing reports, project costing
 CREATE TABLE IF NOT EXISTS public.time_entries (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -702,7 +613,7 @@ CREATE INDEX IF NOT EXISTS idx_time_entries_project ON public.time_entries(proje
 CREATE INDEX IF NOT EXISTS idx_time_entries_member ON public.time_entries(team_member);
 CREATE INDEX IF NOT EXISTS idx_time_entries_date ON public.time_entries(date);
 
--- ─── 11.2 TIMERS (Running) ───────────────────────────────────────────────────
+-- ─── 10.2 TIMERS (Running) ───────────────────────────────────────────────────
 -- Used by: live timer start/pause/resume/stop
 CREATE TABLE IF NOT EXISTS public.timers (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -722,7 +633,7 @@ CREATE TABLE IF NOT EXISTS public.timers (
 CREATE INDEX IF NOT EXISTS idx_timers_member ON public.timers(team_member);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_timers_member_active ON public.timers(team_member) WHERE status = 'running';
 
--- ─── 11.3 TIME REPORTS (Materialized Summary) ─────────────────────────────────
+-- ─── 10.3 TIME REPORTS (Materialized Summary) ─────────────────────────────────
 -- Used by: weekly report aggregation, team productivity
 CREATE TABLE IF NOT EXISTS public.time_reports (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -737,10 +648,10 @@ CREATE TABLE IF NOT EXISTS public.time_reports (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_time_reports_week_member ON public.time_reports(week_start, team_member);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  12. ACCESS & CONFIG — API Keys, Dashboard Widgets, Settings
+--  11. ACCESS & CONFIG — API Keys, Dashboard Widgets, Settings
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- ─── 12.1 API KEYS ───────────────────────────────────────────────────────────
+-- ─── 11.1 API KEYS ───────────────────────────────────────────────────────────
 -- Used by: public API access, integration authentication
 CREATE TABLE IF NOT EXISTS public.api_keys (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -758,7 +669,7 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON public.api_keys(key_prefix);
 
--- ─── 12.2 DASHBOARD WIDGETS ──────────────────────────────────────────────────
+-- ─── 11.2 DASHBOARD WIDGETS ──────────────────────────────────────────────────
 -- Used by: per-user dashboard layout configuration
 CREATE TABLE IF NOT EXISTS public.dashboard_widgets (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -771,7 +682,7 @@ CREATE TABLE IF NOT EXISTS public.dashboard_widgets (
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ─── 12.3 SETTINGS ───────────────────────────────────────────────────────────
+-- ─── 11.3 SETTINGS ───────────────────────────────────────────────────────────
 -- Used by: ops dashboard, resend.js, email queue processor
 CREATE TABLE IF NOT EXISTS public.settings (
   key         TEXT PRIMARY KEY,
@@ -780,7 +691,7 @@ CREATE TABLE IF NOT EXISTS public.settings (
 );
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  13. SCHEMA ENHANCEMENTS — ALTER TABLE additions
+--  12. SCHEMA ENHANCEMENTS — ALTER TABLE additions
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- deals: older projects only had logged_at / updated_at — add created_at if missing
@@ -795,13 +706,10 @@ SET
   logged_at  = COALESCE(logged_at, created_at, updated_at, NOW())
 WHERE created_at IS NULL OR updated_at IS NULL OR logged_at IS NULL;
 
--- Enhanced full-text search index for knowledge base articles
-CREATE INDEX IF NOT EXISTS idx_kb_articles_search
-  ON kb_articles
-  USING gin(to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')));
+
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  14. REALTIME PUBLICATIONS
+--  13. REALTIME PUBLICATIONS
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 DO $$
@@ -830,18 +738,12 @@ END $$;
 
 DO $$
 BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.anomalies;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
-DO $$
-BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.nurture_subscriptions;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  15. ROW LEVEL SECURITY
+--  14. ROW LEVEL SECURITY
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ─── Portal Tables ───────────────────────────────────────────────────────────
@@ -883,20 +785,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- ─── Knowledge Base Tables ───────────────────────────────────────────────────
-ALTER TABLE kb_articles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE kb_categories ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Anyone can read published articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Anyone can read published articles" ON kb_articles FOR SELECT USING (status = 'published'); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can read all articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Auth users can read all articles" ON kb_articles FOR SELECT TO authenticated USING (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can insert articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Auth users can insert articles" ON kb_articles FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can update articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Auth users can update articles" ON kb_articles FOR UPDATE TO authenticated USING (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can delete articles' AND tablename = 'kb_articles') THEN CREATE POLICY "Auth users can delete articles" ON kb_articles FOR DELETE TO authenticated USING (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can read categories' AND tablename = 'kb_categories') THEN CREATE POLICY "Auth users can read categories" ON kb_categories FOR SELECT TO authenticated USING (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can insert categories' AND tablename = 'kb_categories') THEN CREATE POLICY "Auth users can insert categories" ON kb_categories FOR INSERT TO authenticated WITH CHECK (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can update categories' AND tablename = 'kb_categories') THEN CREATE POLICY "Auth users can update categories" ON kb_categories FOR UPDATE TO authenticated USING (true); END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth users can delete categories' AND tablename = 'kb_categories') THEN CREATE POLICY "Auth users can delete categories" ON kb_categories FOR DELETE TO authenticated USING (true); END IF; END $$;
-
 -- ─── Time Tracking Tables ────────────────────────────────────────────────────
 ALTER TABLE public.time_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.timers ENABLE ROW LEVEL SECURITY;
@@ -919,12 +807,12 @@ DO $$ BEGIN
 END $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  16. MIGRATIONS (for existing databases)
+--  15. MIGRATIONS (for existing databases)
 -- ═══════════════════════════════════════════════════════════════════════════════
 ALTER TABLE public.deals ADD COLUMN IF NOT EXISTS cogs_monthly NUMERIC DEFAULT 0;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
---  17. SEED DATA
+--  16. SEED DATA
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ─── Default Admin Profile ───────────────────────────────────────────────────
@@ -948,15 +836,6 @@ INSERT INTO public.settings (key, value) VALUES
   ('twilio_whatsapp_number', '')
 ON CONFLICT (key) DO NOTHING;
 
--- ─── Knowledge Base: Default Categories ──────────────────────────────────────
-INSERT INTO kb_categories (name, slug, description, icon, sort_order) VALUES
-  ('Sales Playbooks',    'sales-playbooks',    'Step-by-step sales playbooks and methodologies',                'target',      1),
-  ('FAQs',               'faqs',               'Frequently asked questions — internal and customer-facing',    'help-circle', 2),
-  ('Value Engine',       'value-engine',       'Value propositions, messaging frameworks, and positioning',    'zap',         3),
-  ('Message Templates',  'msg-templates',      'Pre-written messages for calls, emails, LinkedIn, and SMS',    'message-square', 4),
-  ('Email Templates',    'email-templates',    'Transactional and marketing email templates',                  'mail',        5),
-  ('SOPs',               'sops',               'Standard Operating Procedures for all departments',            'clipboard',   6),
-  ('Guides',             'guides',             'How-to guides, onboarding docs, and best practices',           'book-open',   7)
-ON CONFLICT (slug) DO NOTHING;
+
 
 COMMIT;

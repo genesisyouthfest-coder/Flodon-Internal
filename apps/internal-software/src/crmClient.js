@@ -73,7 +73,7 @@ var API = window.location.origin + '/crm/api'
     }
 
     function stageBadge(stage,small){
-      var colors={prospect:'badge-gray',contacted:'badge-blue',replied:'badge-neon',discovery_booked:'badge-blue',discovery_completed:'badge-amber',audit_proposed:'badge-amber',audit_purchased:'badge-green',audit_delivered:'badge-green',implementation_proposed:'badge-amber',awaiting_confirmation:'badge-amber',confirmed:'badge-green',client:'badge-green',nurture:'badge-neon',lost:'badge-red',lead:'badge-gray',contacted:'badge-blue',demo:'badge-neon',proposal:'badge-amber',negotiation:'badge-amber',closed_won:'badge-green',closed_lost:'badge-red',won:'badge-green',lost:'badge-red',call_booked:'badge-blue',booked:'badge-blue',completed:'badge-green',cancelled:'badge-red',noshowed:'badge-red',interested:'badge-green',not_interested:'badge-red',follow_up_needed:'badge-amber',pending:'badge-gray',done:'badge-green',queued:'badge-gray',sending:'badge-blue',sent:'badge-green',failed:'badge-red'}
+      var colors={prospect:'badge-gray',contacted:'badge-blue',replied:'badge-neon',discovery_booked:'badge-blue',discovery_completed:'badge-amber',audit_proposed:'badge-amber',audit_purchased:'badge-green',audit_delivered:'badge-green',implementation_proposed:'badge-amber',awaiting_confirmation:'badge-amber',confirmed:'badge-green',client:'badge-green',nurture:'badge-neon',lost:'badge-red',lead:'badge-gray',demo:'badge-neon',proposal:'badge-amber',negotiation:'badge-amber',closed_won:'badge-green',closed_lost:'badge-red',won:'badge-green',call_booked:'badge-blue',booked:'badge-blue',completed:'badge-green',cancelled:'badge-red',noshowed:'badge-red',interested:'badge-green',not_interested:'badge-red',follow_up_needed:'badge-amber',pending:'badge-gray',done:'badge-green',queued:'badge-gray',sending:'badge-blue',sent:'badge-green',failed:'badge-red'}
       return '<span class="badge '+(colors[stage]||'badge-gray')+'">'+esc(stage).replace(/_/g,' ')+'</span>'
     }
 
@@ -125,7 +125,7 @@ var API = window.location.origin + '/crm/api'
       el.innerHTML=html
     }
 
-    // ─── Month picker state ───
+    // ─── Month & FY picker state ───
     var selectedMonth = (function(){
       var d=new Date()
       return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')
@@ -149,6 +149,20 @@ var API = window.location.origin + '/crm/api'
       var d=new Date(parseInt(parts[0]),parseInt(parts[1])-1,1)
       return d.toLocaleDateString('en-US',{month:'short',year:'numeric'})
     }
+    var selectedFY = (function(){
+      var now=new Date()
+      return now.getMonth()>=3?now.getFullYear()+1:now.getFullYear()
+    })()
+    function renderFYSelector(){
+      var now=new Date()
+      var currentFY=now.getMonth()>=3?now.getFullYear()+1:now.getFullYear()
+      var options=''
+      for(var f=currentFY+1;f>=currentFY-3;f--){
+        var selected=f===selectedFY?' selected':''
+        options+='<option value="'+f+'"'+selected+'>FY '+f+' ('+(f-1)+'-'+f+')</option>'
+      }
+      return '<select id="fy-picker" class="form-select" style="width:auto;display:inline-block" onchange="selectedFY=parseInt(this.value);loadMonthlyTrend()">'+options+'</select>'
+    }
 
     // ─── DASHBOARD ───
     function renderDashboard(){
@@ -162,7 +176,7 @@ var API = window.location.origin + '/crm/api'
         '<div class="grid-2"><div class="card" style="padding:0"><div class="arr-visual" id="dash-arr"><div class="empty-state">Loading...</div></div></div><div class="card"><div class="card-title">Pipeline Distribution</div><div id="dash-status-bars"></div></div></div>'+
         '<div class="grid-3"><div class="card"><div class="card-title">Sales Analytics</div><div id="dash-sales"></div></div><div class="card"><div class="card-title">Client Pipeline</div><div id="dash-client-chart"></div></div><div class="card"><div class="card-title">Client Breakdown</div><div id="dash-breakdown"></div></div></div>'+
         '<div class="card"><div class="card-title">Deal Pipeline</div><div id="dash-deal-chart"><div class="empty-state">Loading...</div></div></div>'+
-        '<div class="card" style="margin-top:16px"><div class="card-title">Monthly Trend (12 months)</div><div id="dash-monthly-trend"></div></div>'
+        '<div class="card" style="margin-top:16px"><div class="card-title" style="display:flex;align-items:center;gap:8px"><span>Monthly Trend</span>'+renderFYSelector()+'</div><div id="dash-monthly-trend"></div></div>'
       showLoader(document.getElementById('dash-stats'),12,'stat')
       showLoader(document.getElementById('dash-revenue'),4,'row')
       showLoader(document.getElementById('dash-costs'),4,'row')
@@ -174,11 +188,10 @@ var API = window.location.origin + '/crm/api'
       Promise.allSettled([
         api('GET','/dashboard-stats?month='+selectedMonth),
         api('GET','/pipeline'),
-        api('GET','/monthly-trend'),
+        api('GET','/monthly-trend?fy='+selectedFY),
       ]).then(function(results){
         var data=settledValue(results[0],{})||{}
         var pipeline=settledValue(results[1],{})||{}
-        var monthlyTrend=settledValue(results[2],[])||[]
         var deals=flattenPipeline(pipeline)
         var pipelineValue=data.pipeline_value?data.pipeline_value:sum(deals,function(d){return d.amount_monthly})
         var weighted=sum(deals,function(d){return (d.amount_monthly||0)*((d.probability||0)/100)})
@@ -316,34 +329,7 @@ var API = window.location.origin + '/crm/api'
         '</div>'
 
         // ── Monthly Trend Chart ──
-        if(monthlyTrend&&monthlyTrend.length){
-          var maxMrr=Math.max(1,...monthlyTrend.map(function(t){return t.mrr}))
-          var maxClients=Math.max(1,...monthlyTrend.map(function(t){return t.new_clients}))
-          document.getElementById('dash-monthly-trend').innerHTML=
-            '<div style="overflow-x:auto">'+
-            '<table class="table" style="width:100%;font-size:12px"><thead><tr>'+
-              '<th>Month</th>'+
-              '<th style="text-align:right">MRR</th>'+
-              '<th style="text-align:right">New Clients</th>'+
-              '<th style="text-align:right">Expenses</th>'+
-              '<th style="width:40%">MRR Trend</th>'+
-            '</tr></thead><tbody>'+
-            monthlyTrend.map(function(t){
-              var barPct=Math.max(2,Math.round(t.mrr/maxMrr*100))
-              var clientBar=Math.max(2,Math.round(t.new_clients/maxClients*100))
-              return '<tr>'+
-                '<td style="white-space:nowrap">'+formatMonth(t.month)+'</td>'+
-                '<td style="text-align:right;font-weight:600">'+fmtINR(t.mrr)+'</td>'+
-                '<td style="text-align:right">'+t.new_clients+' <span style="display:inline-block;width:40px;height:8px;background:var(--border);border-radius:4px;vertical-align:middle;margin-left:4px"><span style="display:block;height:100%;width:'+clientBar+'%;background:var(--accent);border-radius:4px"></span></span></td>'+
-                '<td style="text-align:right">'+fmtINR(t.expenses)+'</td>'+
-                '<td><div style="height:16px;background:var(--border);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+barPct+'%;background:var(--green);border-radius:4px;transition:width 0.3s"></div></div></td>'+
-              '</tr>'
-            }).join('')+
-            '</tbody></table></div>'+
-            '<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">Data as of '+new Date().toLocaleString()+'</div>'
-        }else{
-          document.getElementById('dash-monthly-trend').innerHTML='<div class="empty-state">No trend data available</div>'
-        }
+        loadMonthlyTrend()
       }).catch(function(e){el.innerHTML='<div class="empty-state">Failed to load dashboard: '+e.message+'</div>'})
     }
 
@@ -372,6 +358,44 @@ var API = window.location.origin + '/crm/api'
           }).join('')||'<div class="empty-state">No clients</div>'
         })
       }).catch(function(e){toast(e.message,'error')})
+    }
+
+    function loadMonthlyTrend(){
+      var el=document.getElementById('dash-monthly-trend')
+      if(!el)return
+      api('GET','/monthly-trend?fy='+selectedFY).then(function(data){
+        var trend=data||[]
+        if(trend.length){
+          var maxMrr=Math.max(1,...trend.map(function(t){return t.mrr}))
+          var maxClients=Math.max(1,...trend.map(function(t){return t.new_clients}))
+          el.innerHTML=
+            '<div style="overflow-x:auto">'+
+            '<table class="table" style="width:100%;font-size:12px"><thead><tr>'+
+              '<th>Month</th>'+
+              '<th style="text-align:right">MRR</th>'+
+              '<th style="text-align:right">New Clients</th>'+
+              '<th style="text-align:right">Expenses</th>'+
+              '<th style="width:40%">MRR Trend</th>'+
+            '</tr></thead><tbody>'+
+            trend.map(function(t){
+              var barPct=Math.max(2,Math.round(t.mrr/maxMrr*100))
+              var clientBar=Math.max(2,Math.round(t.new_clients/maxClients*100))
+              return '<tr>'+
+                '<td style="white-space:nowrap">'+formatMonth(t.month)+'</td>'+
+                '<td style="text-align:right;font-weight:600">'+fmtINR(t.mrr)+'</td>'+
+                '<td style="text-align:right">'+t.new_clients+' <span style="display:inline-block;width:40px;height:8px;background:var(--border);border-radius:4px;vertical-align:middle;margin-left:4px"><span style="display:block;height:100%;width:'+clientBar+'%;background:var(--accent);border-radius:4px"></span></span></td>'+
+                '<td style="text-align:right">'+fmtINR(t.expenses)+'</td>'+
+                '<td><div style="height:16px;background:var(--border);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+barPct+'%;background:var(--green);border-radius:4px;transition:width 0.3s"></div></div></td>'+
+              '</tr>'
+            }).join('')+
+            '</tbody></table></div>'+
+            '<div style="margin-top:8px;font-size:11px;color:var(--text-muted)">Data as of '+new Date().toLocaleString()+'</div>'
+        }else{
+          el.innerHTML='<div class="empty-state">No trend data available</div>'
+        }
+      }).catch(function(e){
+        el.innerHTML='<div class="empty-state">Failed to load trend: '+e.message+'</div>'
+      })
     }
 
     function openMoveStage(id,current){
@@ -666,33 +690,25 @@ var API = window.location.origin + '/crm/api'
     function saveStageData(id){
       var pd={}
       var keyMap={
+        'owner':'lead_owner',
+        'years':'years_in_business',
+        'revenue':'revenue_range',
+        'bottleneck':'biggest_bottleneck',
+        'challenge':'biggest_challenge',
+        'follow-up':'follow_up_count',
         'reason':'reason_not_buying',
         'attempt':'followup_attempt',
         'follow-date':'next_followup_date',
-        'followup-notes':'followup_notes',
-        'f-goals':'founder_goals',
-        'f-frustrations':'founder_frustrations',
-        'f-bottlenecks':'founder_bottlenecks',
-        'bottleneck':'biggest_bottleneck',
-        'challenge':'biggest_challenge',
-        'rev-model':'revenue_model',
-        'growth-':'growth_goals',
-        'audit-folder':'audit_folder',
-        'audit-start':'audit_start',
-        'audit-deadline':'audit_deadline',
-        'meeting-notes':'meeting_notes',
-        'preferred-slot-date':'preferred_slot_date',
-        'preferred-slot-start':'preferred_slot_start',
-        'preferred-slot-end':'preferred_slot_end',
-        'confirmed-date':'confirmed_date',
-        'confirmed-start':'confirmed_start',
-        'confirmed-end':'confirmed_end',
-        'calendar-event':'calendar_event',
+        'growth':'growth_goals',
+        'recording':'recording_link',
+        'bottlenecks':'bottlenecks_found',
+        'channel':'outreach_channel',
+        'proposal-sent':'proposal_sent_date',
       }
       var fields=document.querySelectorAll('#modal-body [id^="pd-"]')
       fields.forEach(function(f){
         var raw=f.id.replace('pd-','')
-        var key=keyMap[raw]||raw
+        var key=keyMap[raw]||raw.replace(/-/g,'_')
         var val=f.type==='checkbox'?f.checked:f.value.trim()
         if(val!==''&&val!==null&&val!==false)pd[key]=val
       })
@@ -980,7 +996,7 @@ var API = window.location.origin + '/crm/api'
               '<div class="detail-row"><span class="detail-label">Business Description</span><span class="detail-value">'+(q.businessDescription||'—')+'</span></div>'+
               (q.plan_tier?'<div class="detail-row"><span class="detail-label">Plan</span><span class="detail-value"><span class="badge badge-green">'+esc(q.plan_tier)+'</span> '+(q.plan_name?esc(q.plan_name):'')+'</span></div>':'')+
               (q.preferred_slot?'<div class="detail-row"><span class="detail-label">Preferred Slot</span><span class="detail-value">'+(q.preferred_slot.date||'')+' '+(q.preferred_slot.startTime||'')+'</span></div>':'')+
-              (c.booked_date&&c.booked_date!=='N/A'?'<div class="detail-row"><span class="detail-label">Booked Date</span><span class="detail-value">'+esc(c.booked_date)+' '+(c.booked_start?esc(c.booked_start):'')+'</span></div>':'')+
+              (q.booked_date&&q.booked_date!=='N/A'?'<div class="detail-row"><span class="detail-label">Booked Date</span><span class="detail-value">'+esc(q.booked_date)+' '+(q.booked_start?esc(q.booked_start):'')+'</span></div>':'')+
             '</div>'+
           '</div>'+
 
@@ -1048,7 +1064,7 @@ var API = window.location.origin + '/crm/api'
           prospect:['linkedin','lead_owner','website'],
           contacted:['outreach_channel','first_contact','last_contact','follow_up_count','outcome'],
           replied:['interested','wants_call','objections'],
-          discovery_booked:['founder_role','years_in_business','revenue_range','team_size','biz_model','main_offer','biggest_goal','why_now','bottleneck','challenge','call_date','call_link'],
+          discovery_booked:['founder_role','years_in_business','revenue_range','team_size','biz_model','main_offer','biggest_goal','why_now','biggest_bottleneck','biggest_challenge','call_date','call_link'],
           discovery_completed:['f_goals','f_frustrations','f_bottlenecks','rev_model','growth_goals','meeting_notes','recording_link'],
           audit_proposed:['audit_price','audit_scope','proposal_sent_date','audit_status'],
           audit_purchased:['audit_folder','audit_start','audit_deadline'],
@@ -1062,7 +1078,7 @@ var API = window.location.origin + '/crm/api'
         }
         var linkFields={linkedin:1,website:1,call_link:1,recording_link:1,audit_folder:1,audit_pdf:1,calendar_event:1}
         var priceFields={audit_price:1,price:1}
-        var dateFields={first_contact:1,last_contact:1,call_date:1,proposal_sent_date:1,audit_start:1,audit_deadline:1,start_date:1,end_date:1,next_followup:1,preferred_slot_date:1,preferred_slot_start:1,preferred_slot_end:1,confirmed_date:1,confirmed_start:1,confirmed_end:1}
+        var dateFields={first_contact:1,last_contact:1,call_date:1,proposal_sent_date:1,audit_start:1,audit_deadline:1,start_date:1,end_date:1,next_followup_date:1,preferred_slot_date:1,confirmed_date:1}
         var labels={
           linkedin:'LinkedIn',lead_owner:'Lead Owner',website:'Website',
           outreach_channel:'Channel',first_contact:'First Contact',last_contact:'Last Contact',

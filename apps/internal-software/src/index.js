@@ -19,20 +19,11 @@ import {
   createStripeCustomer, createSubscription, cancelSubscription,
   handleStripeWebhook, listInvoices, getStripeCustomer, isStripeConfigured,
 
-  createAffiliate, trackReferral, convertReferral, payoutAffiliate,
-  listAffiliates, listReferrals,
-
-  runAnomalyDetection, getAnomalies, acknowledgeAnomaly,
-
   generateWeeklyDigest,
 
   createApiKey, listApiKeys, revokeApiKey, validateApiKey,
 
   createRateLimitMiddleware,
-
-  listArticles, getArticle, getArticleBySlug,
-  createArticle, updateArticle, deleteArticle,
-  listCategories, createCategory, updateCategory, deleteCategory,
 
   requestMagicLink, verifyMagicLink, getPortalSession,
   getPortalDashboard, listClientDeals, listClientInvoices,
@@ -198,56 +189,6 @@ async function handleCompanyOSRoutes(req, res, url, method, body) {
       return json(res, 200, { success: true, data })
     }
 
-    // ─── Affiliates ───
-    if (method === 'GET' && pathname === '/api/affiliates') {
-      const data = await listAffiliates()
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/api/affiliates') {
-      const data = await createAffiliate(body)
-      return json(res, 201, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/api/affiliates/track') {
-      const data = await trackReferral(body.referral_code, body.client_id)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/api/affiliates/convert') {
-      const data = await convertReferral(body.deal_id)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/api/affiliates/payout') {
-      const data = await payoutAffiliate(body.affiliate_id, body.amount)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'GET' && pathname.startsWith('/api/affiliates/') && pathname.endsWith('/referrals')) {
-      const affId = pathname.split('/')[3]
-      const data = await listReferrals(affId)
-      return json(res, 200, { success: true, data })
-    }
-
-    // ─── Anomaly Detection ───
-    if (method === 'GET' && pathname === '/api/anomalies') {
-      const params = parseUrl(url).query
-      const data = await getAnomalies(parseInt(params.get('limit') || '20'))
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/api/anomalies/run') {
-      const data = await runAnomalyDetection()
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname.startsWith('/api/anomalies/') && pathname.endsWith('/acknowledge')) {
-      const id = pathname.split('/')[3]
-      const data = await acknowledgeAnomaly(id, body.profile_id || ADMIN_PROFILE_ID)
-      return json(res, 200, { success: true, data })
-    }
-
     // ─── Reporting ───
     if (method === 'POST' && pathname === '/api/reports/weekly-digest') {
       const data = await generateWeeklyDigest()
@@ -268,64 +209,6 @@ async function handleCompanyOSRoutes(req, res, url, method, body) {
     if (method === 'DELETE' && pathname.startsWith('/api/api-keys/')) {
       const id = pathname.split('/')[3]
       const data = await revokeApiKey(id)
-      return json(res, 200, { success: true, data })
-    }
-
-    // ─── Knowledge Base ───
-    if (method === 'GET' && pathname === '/api/kb/articles') {
-      const params = parseUrl(url).query
-      const data = await listArticles({
-        type: params.get('type'), category_id: params.get('category_id'),
-        search: params.get('search'), status: params.get('status'),
-        tags: params.get('tags') ? params.get('tags').split(',') : undefined,
-        page: parseInt(params.get('page') || '1'),
-        limit: parseInt(params.get('limit') || '50'),
-      })
-      return json(res, 200, { success: true, ...data })
-    }
-
-    if (method === 'GET' && pathname.startsWith('/api/kb/articles/')) {
-      const id = pathname.split('/')[4]
-      const data = await getArticle(id)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/api/kb/articles') {
-      const data = await createArticle(body)
-      return json(res, 201, { success: true, data })
-    }
-
-    if (method === 'PATCH' && pathname.startsWith('/api/kb/articles/')) {
-      const id = pathname.split('/')[4]
-      const data = await updateArticle(id, body)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'DELETE' && pathname.startsWith('/api/kb/articles/')) {
-      const id = pathname.split('/')[4]
-      const data = await deleteArticle(id)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'GET' && pathname === '/api/kb/categories') {
-      const data = await listCategories()
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'POST' && pathname === '/api/kb/categories') {
-      const data = await createCategory(body)
-      return json(res, 201, { success: true, data })
-    }
-
-    if (method === 'PATCH' && pathname.startsWith('/api/kb/categories/')) {
-      const id = pathname.split('/')[4]
-      const data = await updateCategory(id, body)
-      return json(res, 200, { success: true, data })
-    }
-
-    if (method === 'DELETE' && pathname.startsWith('/api/kb/categories/')) {
-      const id = pathname.split('/')[4]
-      const data = await deleteCategory(id)
       return json(res, 200, { success: true, data })
     }
 
@@ -758,17 +641,9 @@ http.createServer(async (req, res) => {
     } catch (err) { log(`[Nurture] Queue error: ${err.message}`, 'error') }
   }, 15 * 60 * 1000)
 
-  setInterval(async () => {
-    try {
-      const result = await runAnomalyDetection()
-      if (result.detected > 0) log(`[Anomaly] Auto-detected ${result.detected} anomaly(ies)`, 'ok')
-    } catch (err) { log(`[Anomaly] Auto-detect error: ${err.message}`, 'error') }
-  }, 60 * 60 * 1000)
-
   log('[Email Queue] Processor active — checking every 60s')
   log('[Auto Forecast] Running every 6 hours')
   log('[Nurture Queue] Processing every 15 minutes')
-  log('[Anomaly Detection] Scanning every 60 minutes')
 })
 
 const client = new Client({

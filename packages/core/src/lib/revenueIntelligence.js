@@ -158,7 +158,6 @@ const LEAD_SCORE_WEIGHTS = {
   isReadyToMove: 20,
   hasInvestmentLevel: 15,
   sourceWebsite: 5,
-  sourceReferral: 15,
   hasService: 10,
 }
 
@@ -192,8 +191,7 @@ export async function calculateLeadScore(clientId) {
     if (q.readyToMoveForward === 'Yes') { score += LEAD_SCORE_WEIGHTS.isReadyToMove; factors.isReadyToMove = true }
     if (q.investmentLevel) { score += LEAD_SCORE_WEIGHTS.hasInvestmentLevel; factors.hasInvestmentLevel = true }
 
-    if (client.lead_source === 'referral') { score += LEAD_SCORE_WEIGHTS.sourceReferral; factors.source = 'referral' }
-    else if (client.lead_source === 'website') { score += LEAD_SCORE_WEIGHTS.sourceWebsite; factors.source = 'website' }
+    if (client.lead_source === 'website') { score += LEAD_SCORE_WEIGHTS.sourceWebsite; factors.source = 'website' }
 
     if (client.service) { score += LEAD_SCORE_WEIGHTS.hasService; factors.hasService = true }
 
