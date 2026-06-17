@@ -8,7 +8,7 @@ function escBoot(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g
 
 var API = window.location.origin + '/crm/api'
     var OS_API = window.location.origin + '/api'
-    var PIPELINE_STAGES = ['prospect', 'contacted', 'replied', 'discovery_booked', 'discovery_completed', 'audit_proposed', 'audit_purchased', 'audit_delivered', 'implementation_proposed', 'client', 'followup', 'lost']
+    var PIPELINE_STAGES = ['prospect', 'contacted', 'replied', 'discovery_booked', 'discovery_completed', 'audit_proposed', 'audit_purchased', 'audit_delivered', 'implementation_proposed', 'awaiting_confirmation', 'confirmed', 'client', 'followup', 'lost']
     var CLIENT_STAGES = PIPELINE_STAGES
     var DEAL_STAGES = ['lead', 'contacted', 'demo', 'proposal', 'negotiation', 'closed_won', 'closed_lost']
     
@@ -73,7 +73,7 @@ var API = window.location.origin + '/crm/api'
     }
 
     function stageBadge(stage,small){
-      var colors={prospect:'badge-gray',contacted:'badge-blue',replied:'badge-neon',discovery_booked:'badge-blue',discovery_completed:'badge-amber',audit_proposed:'badge-amber',audit_purchased:'badge-green',audit_delivered:'badge-green',implementation_proposed:'badge-amber',client:'badge-green',nurture:'badge-neon',lost:'badge-red',lead:'badge-gray',contacted:'badge-blue',demo:'badge-neon',proposal:'badge-amber',negotiation:'badge-amber',closed_won:'badge-green',closed_lost:'badge-red',won:'badge-green',lost:'badge-red',call_booked:'badge-blue',booked:'badge-blue',completed:'badge-green',cancelled:'badge-red',noshowed:'badge-red',interested:'badge-green',not_interested:'badge-red',follow_up_needed:'badge-amber',pending:'badge-gray',done:'badge-green',queued:'badge-gray',sending:'badge-blue',sent:'badge-green',failed:'badge-red'}
+      var colors={prospect:'badge-gray',contacted:'badge-blue',replied:'badge-neon',discovery_booked:'badge-blue',discovery_completed:'badge-amber',audit_proposed:'badge-amber',audit_purchased:'badge-green',audit_delivered:'badge-green',implementation_proposed:'badge-amber',awaiting_confirmation:'badge-amber',confirmed:'badge-green',client:'badge-green',nurture:'badge-neon',lost:'badge-red',lead:'badge-gray',contacted:'badge-blue',demo:'badge-neon',proposal:'badge-amber',negotiation:'badge-amber',closed_won:'badge-green',closed_lost:'badge-red',won:'badge-green',lost:'badge-red',call_booked:'badge-blue',booked:'badge-blue',completed:'badge-green',cancelled:'badge-red',noshowed:'badge-red',interested:'badge-green',not_interested:'badge-red',follow_up_needed:'badge-amber',pending:'badge-gray',done:'badge-green',queued:'badge-gray',sending:'badge-blue',sent:'badge-green',failed:'badge-red'}
       return '<span class="badge '+(colors[stage]||'badge-gray')+'">'+esc(stage).replace(/_/g,' ')+'</span>'
     }
 
@@ -565,9 +565,10 @@ var API = window.location.origin + '/crm/api'
     }
 
     function openClientDetail(id){
-      api('GET','/clients?search='+id).then(function(d){
-        var c=d.clients?d.clients[0]:null
+      api('GET','/clients/'+id+'/full').then(function(d){
+        var c=d.data||d
         if(!c){toast('Client not found','error');return}
+        var q=c.qualification||{}
         var stageSpecificHtml=renderPipelineData(c)
         openDrawer(esc(c.name),
           '<div class="drawer-section"><div class="drawer-section-title">Contact</div>'+
@@ -581,9 +582,16 @@ var API = window.location.origin + '/crm/api'
           (c.industry?'<div class="detail-row"><span class="detail-label">Industry</span><span class="detail-value">'+esc(c.industry)+'</span></div>':'')+
           '<div class="detail-row"><span class="detail-label">Lead Score</span><span class="detail-value">'+(c.lead_score!=null?'<span class="text-accent">'+c.lead_score+'</span>':'—')+'</span></div>'+
           '<div class="detail-row"><span class="detail-label">Churn Risk</span><span class="detail-value">'+(c.churn_risk!=null?(c.churn_risk*100).toFixed(0)+'%':'—')+'</span></div></div>'+
+          (q.monthlyRevenue||q.investmentLevel?'<div class="drawer-section"><div class="drawer-section-title">Qualification</div>'+
+            (q.monthlyRevenue?'<div class="detail-row"><span class="detail-label">Revenue</span><span class="detail-value">'+esc(q.monthlyRevenue)+'</span></div>':'')+
+            (q.investmentLevel?'<div class="detail-row"><span class="detail-label">Investment</span><span class="detail-value">'+esc(q.investmentLevel)+'</span></div>':'')+
+            (q.biggestBottleneck?'<div class="detail-row"><span class="detail-label">Bottleneck</span><span class="detail-value">'+esc(q.biggestBottleneck)+'</span></div>':'')+
+            (q.goal90Days?'<div class="detail-row"><span class="detail-label">90-Day Goal</span><span class="detail-value">'+esc(q.goal90Days)+'</span></div>':'')+
+            (q.plan_tier?'<div class="detail-row"><span class="detail-label">Plan</span><span class="detail-value">'+esc(q.plan_tier)+'</span></div>':'')+
+          '</div>':'')+
           stageSpecificHtml+
           '<div class="drawer-section"><div class="drawer-section-title">Notes</div><p class="text-sm text-muted">'+esc(c.notes||'No notes')+'</p></div>'+
-          '<div class="flex gap-8" style="flex-wrap:wrap"><button class="btn btn-sm btn-accent" onclick="closeDrawer();editClient(\''+c.id+'\')">Edit</button><button class="btn btn-sm btn-secondary" onclick="closeDrawer();openStageForm(\''+c.id+'\',\''+c.pipeline_stage+'\')">Update Stage Data</button><button class="btn btn-sm btn-secondary" onclick="closeDrawer();updateClientStage(\''+c.id+'\',\''+c.pipeline_stage+'\')">Move Stage</button><button class="btn btn-sm btn-secondary" onclick="scoreLead(\''+c.id+'\')">Score Lead</button><button class="btn btn-sm btn-secondary" onclick="churnRisk(\''+c.id+'\')">Churn Risk</button></div>')
+          '<div class="flex gap-8" style="flex-wrap:wrap"><button class="btn btn-sm btn-accent" onclick="closeDrawer();editClient(\''+c.id+'\')">Edit</button><button class="btn btn-sm btn-secondary" onclick="closeDrawer();openStageForm(\''+c.id+'\',\''+c.pipeline_stage+'\')">Stage Data</button><button class="btn btn-sm btn-secondary" onclick="closeDrawer();updateClientStage(\''+c.id+'\',\''+c.pipeline_stage+'\')">Move Stage</button></div>')
       }).catch(function(e){toast(e.message,'error')})
     }
 
@@ -633,6 +641,12 @@ var API = window.location.origin + '/crm/api'
         formHtml='<div class="field-row"><div class="field"><label>Start Date</label><input id="pd-start-date" type="date"></div><div class="field"><label>End Date</label><input id="pd-end-date" type="date"></div></div>'+
           '<div class="field"><label>Deliverables</label><textarea id="pd-deliverables" placeholder="Key deliverables"></textarea></div>'+
           '<div class="field-row"><div class="field"><label>Wins</label><textarea id="pd-wins" placeholder="Client wins / success stories"></textarea></div><div class="field"><label>Metrics</label><textarea id="pd-metrics" placeholder="Key metrics / results"></textarea></div></div>'
+      } else       if(stage==='awaiting_confirmation'){
+        formHtml='<div class="field-row"><div class="field"><label>Preferred Date</label><input id="pd-preferred-slot-date" type="date"></div><div class="field"><label>Preferred Start</label><input id="pd-preferred-slot-start" type="time"></div></div>'+
+          '<div class="field"><label>Preferred End</label><input id="pd-preferred-slot-end" type="time"></div>'
+      } else if(stage==='confirmed'){
+        formHtml='<div class="field-row"><div class="field"><label>Confirmed Date</label><input id="pd-confirmed-date" type="date"></div><div class="field"><label>Confirmed Start</label><input id="pd-confirmed-start" type="time"></div></div>'+
+          '<div class="field-row"><div class="field"><label>Confirmed End</label><input id="pd-confirmed-end" type="time"></div><div class="field"><label>Calendar Event Link</label><input id="pd-calendar-event" placeholder="https://calendar.google.com/..."></div></div>'
       } else if(stage==='followup'){
         formHtml='<div class="field"><label>Reason Not Buying</label><textarea id="pd-reason" placeholder="Why didn\'t they buy?"></textarea></div>'+
           '<div class="field-row"><div class="field"><label>Follow-up Attempt</label><select id="pd-attempt"><option value="1">1/3</option><option value="2">2/3</option><option value="3">3/3</option></select></div><div class="field"><label>Next Follow-up Date</label><input id="pd-follow-date" type="date"></div></div>'+
@@ -667,6 +681,13 @@ var API = window.location.origin + '/crm/api'
         'audit-start':'audit_start',
         'audit-deadline':'audit_deadline',
         'meeting-notes':'meeting_notes',
+        'preferred-slot-date':'preferred_slot_date',
+        'preferred-slot-start':'preferred_slot_start',
+        'preferred-slot-end':'preferred_slot_end',
+        'confirmed-date':'confirmed_date',
+        'confirmed-start':'confirmed_start',
+        'confirmed-end':'confirmed_end',
+        'calendar-event':'calendar_event',
       }
       var fields=document.querySelectorAll('#modal-body [id^="pd-"]')
       fields.forEach(function(f){
@@ -679,7 +700,9 @@ var API = window.location.origin + '/crm/api'
       api('PATCH','/clients/'+id,{pipeline_data:pd}).then(function(){
         toast('Stage data saved','success')
         closeModal()
-        openClientDetail(id)
+        var hash=window.location.hash
+        if(hash&&hash.includes('clients/view/'))renderClientProfile(id)
+        else openClientDetail(id)
       }).catch(function(e){toast(e.message,'error')})
     }
 
@@ -801,46 +824,217 @@ var API = window.location.origin + '/crm/api'
       }).then(function(){toast('Deal created','success');closeModal();renderDeals()}).catch(function(e){toast(e.message,'error')})
     }
 
+    // ─── Auto-save helpers ───
+    var saveTimers = {}
+
+    function autoSave(clientId, field, value) {
+      if (saveTimers[field]) clearTimeout(saveTimers[field])
+      saveTimers[field] = setTimeout(function () {
+        var body = {}
+        body[field] = value
+        api('PATCH', '/clients/' + clientId, body)
+          .then(function () { showSaveIndicator(field) })
+          .catch(function (e) { toast('Save failed: ' + e.message, 'error') })
+      }, 600)
+    }
+
+    function autoSavePipelineData(clientId, key, value) {
+      if (saveTimers['pd-' + key]) clearTimeout(saveTimers['pd-' + key])
+      saveTimers['pd-' + key] = setTimeout(function () {
+        var pd = {}
+        pd[key] = value
+        api('PATCH', '/clients/' + clientId, { pipeline_data: pd })
+          .then(function () { showSaveIndicator(key) })
+          .catch(function (e) { toast('Save failed: ' + e.message, 'error') })
+      }, 600)
+    }
+
+    function autoSaveQualification(clientId, key, value) {
+      if (saveTimers['qf-' + key]) clearTimeout(saveTimers['qf-' + key])
+      saveTimers['qf-' + key] = setTimeout(function () {
+        api('GET', '/clients/' + clientId).then(function (d) {
+          var c = d.data || d
+          var q = Object.assign({}, c.qualification || {})
+          q[key] = value
+          api('PATCH', '/clients/' + clientId, { qualification: q })
+            .then(function () { showSaveIndicator(key) })
+            .catch(function (e) { toast('Save failed: ' + e.message, 'error') })
+        }).catch(function (e) { toast('Save failed: ' + e.message, 'error') })
+      }, 600)
+    }
+
+    function showSaveIndicator(field) {
+      var el = document.getElementById('si-' + field)
+      if (el) { el.textContent = 'Saved'; el.style.opacity = '1'; setTimeout(function () { el.style.opacity = '0' }, 2000) }
+    }
+
+    function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') }
+
+    // ─── Polling for real-time updates ───
+    var pollTimer = null
+    var currentClientId = null
+
+    function startPolling(id) {
+      currentClientId = id
+      if (pollTimer) clearInterval(pollTimer)
+      pollTimer = setInterval(function () {
+        if (currentClientId !== id) return
+        api('GET', '/clients/' + id + '/full').then(function (d) {
+          var c = d.data || d
+          if (!c) return
+          // Update activity section if visible
+          var actEl = document.getElementById('profile-activity')
+          if (actEl) {
+            var activities = c.activity || []
+            actEl.innerHTML = activities.length
+              ? activities.map(function (a) {
+                  return '<div class="detail-row" style="font-size:12px;padding:6px 0"><span class="detail-label" style="text-transform:capitalize">' + esc(a.action.replace(/_/g, ' ')) + '</span><span class="detail-value text-muted" style="font-size:11px">' + fmtDate(a.created_at) + '</span></div>'
+                }).join('')
+              : '<div class="text-sm text-muted" style="padding:8px 0">No activity yet</div>'
+          }
+          // Update calls section if visible
+          var callsEl = document.getElementById('profile-calls')
+          if (callsEl) {
+            var calls = c.calls || []
+            callsEl.innerHTML = calls.length
+              ? calls.map(function (cl) {
+                  return '<div class="detail-row" style="font-size:12px;padding:6px 0"><span class="detail-label">' + stageBadge(cl.status) + '</span><span class="detail-value text-muted" style="font-size:11px">' + fmtDate(cl.scheduled_at) + (cl.outcome ? ' &middot; ' + esc(cl.outcome) : '') + '</span></div>'
+                }).join('')
+              : '<div class="text-sm text-muted" style="padding:8px 0">No calls</div>'
+          }
+        }).catch(function () {})
+      }, 10000)
+    }
+
+    function stopPolling() {
+      currentClientId = null
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+    }
+
+    // ─── Comprehensive Client Profile ───
     function renderClientProfile(id){
       showLoader(document.getElementById('main-content'))
-      api('GET','/clients/'+id).then(function(d){
+      stopPolling()
+      api('GET','/clients/'+id+'/full').then(function(d){
         var c=d.data||d
         if(!c){toast('Client not found','error');renderClients();return}
         var el=document.getElementById('main-content')
-        var stageIdx=PIPELINE_STAGES.indexOf(c.pipeline_stage)
+        var q = c.qualification || {}
+        var pd = c.pipeline_data || {}
+        var calls = c.calls || []
+        var deals = c.deals || []
+        var activity = c.activity || []
+        var projects = c.projects || []
+
         el.innerHTML=
-          '<div class="page-header"><h2>Profile</h2><div class="flex gap-8" style="flex-wrap:wrap">'+
+          // ── Header ──
+          '<div class="page-header"><h2>Client Profile</h2><div class="flex gap-8" style="flex-wrap:wrap">'+
             '<button class="btn btn-accent btn-sm" onclick="editClient(\''+c.id+'\')">Edit</button>'+
             '<button class="btn btn-secondary btn-sm" onclick="openStageForm(\''+c.id+'\',\''+c.pipeline_stage+'\')">Stage Data</button>'+
-            '<button class="btn btn-secondary btn-sm" onclick="updateClientStage(\''+c.id+'\',\''+c.pipeline_stage+'\')">Move</button>'+
-            '<button class="btn btn-secondary btn-sm" onclick="renderClients()">&larr; Clients</button>'+
+            '<button class="btn btn-secondary btn-sm" onclick="updateClientStage(\''+c.id+'\',\''+c.pipeline_stage+'\')">Move Stage</button>'+
+            '<button class="btn btn-secondary btn-sm" onclick="scoreLead(\''+c.id+'\')">Score</button>'+
+            '<button class="btn btn-secondary btn-sm" onclick="renderClients()">&larr; Back</button>'+
           '</div></div>'+
+
+          // ── Profile Header ──
           '<div class="client-profile-header">'+
             '<div class="client-profile-avatar">'+initials(c.name)+'</div>'+
             '<div class="client-profile-info">'+
-              '<div class="client-profile-name">'+esc(c.name)+'</div>'+
-              '<div class="client-profile-company">'+esc(c.company_name||c.brand_name||'')+''+(c.role?'<span class="text-muted"> · '+esc(c.role)+'</span>':'')+'</div>'+
+              '<div class="client-profile-name">'+
+                '<input type="text" id="ie-name" value="'+escAttr(c.name)+'" class="inline-edit-title" onblur="autoSave(\''+c.id+'\',\'name\',this.value)" style="background:transparent;border:none;color:inherit;font:inherit;width:100%;outline:none">'+
+                '<span id="si-name" class="save-indicator"></span>'+
+              '</div>'+
+              '<div class="client-profile-company">'+
+                '<span id="ie-company-display">'+esc(c.company_name||c.brand_name||'')+'</span>'+
+                (c.role?'<span class="text-muted"> · <input type="text" id="ie-role" value="'+escAttr(c.role)+'" class="inline-edit" style="width:auto;min-width:80px" onblur="autoSave(\''+c.id+'\',\'role\',this.value)"><span id="si-role" class="save-indicator"></span></span>':'')+
+              '</div>'+
               '<div class="client-profile-meta">'+
                 stageBadge(c.pipeline_stage)+
                 (c.lead_score!=null?'<span class="badge badge-accent">'+c.lead_score+'</span>':'')+
                 '<span class="text-muted" style="font-size:10px">'+esc(c.source||c.lead_source||'manual')+'</span>'+
-                (c.churn_risk!=null?'<span class="badge badge-churn">'+(c.churn_risk*100).toFixed(0)+'%</span>':'')+
+                (c.churn_risk!=null?'<span class="badge '+(c.churn_risk>0.3?'badge-red':'badge-gray')+'">'+(c.churn_risk*100).toFixed(0)+'% churn</span>':'')+
               '</div></div></div>'+
-          '<div class="profile-grid">'+
-            '<div class="card"><div class="card-title">Contact</div>'+
-              '<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value">'+esc(c.email||'—')+'</span></div>'+
-              '<div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value">'+esc(c.phone||'—')+'</span></div>'+
-              (c.website?'<div class="detail-row"><span class="detail-label">Website</span><span class="detail-value"><a href="'+esc(c.website)+'" target="_blank">'+esc(c.website)+'</a></span></div>':'')+
-            '</div>'+
-            '<div class="card"><div class="card-title">Company</div>'+
-              '<div class="detail-row"><span class="detail-label">Company</span><span class="detail-value">'+esc(c.company_name||c.brand_name||'—')+'</span></div>'+
-              '<div class="detail-row"><span class="detail-label">Industry</span><span class="detail-value">'+esc(c.industry||'—')+'</span></div>'+
-              '<div class="detail-row"><span class="detail-label">Role</span><span class="detail-value">'+esc(c.role||'—')+'</span></div>'+
+
+          // ── First Row: Contact + Qualification ──
+          '<div class="profile-grid" style="grid-template-columns:1fr 1fr">'+
+            // Contact & Company
+            '<div class="card"><div class="card-title flex-between">Contact Info<span id="si-email" class="save-indicator"></span><span id="si-phone" class="save-indicator"></span><span id="si-website" class="save-indicator"></span></div>'+
+              '<div class="detail-row"><span class="detail-label">Email</span><span class="detail-value"><input type="email" id="ie-email" value="'+escAttr(c.email)+'" class="inline-edit w-full" onblur="autoSave(\''+c.id+'\',\'email\',this.value)"></span></div>'+
+              '<div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value"><input type="text" id="ie-phone" value="'+escAttr(c.phone)+'" class="inline-edit w-full" onblur="autoSave(\''+c.id+'\',\'phone\',this.value)"></span></div>'+
+              (c.website!==undefined?'<div class="detail-row"><span class="detail-label">Website</span><span class="detail-value"><input type="url" id="ie-website" value="'+escAttr(c.website)+'" class="inline-edit w-full" onblur="autoSave(\''+c.id+'\',\'website\',this.value)"></span></div>':'')+
+              '<div class="detail-row"><span class="detail-label">Company</span><span class="detail-value"><strong>'+esc(c.company_name||c.brand_name||'—')+'</strong></span></div>'+
+              '<div class="detail-row"><span class="detail-label">Industry</span><span class="detail-value"><input type="text" id="ie-industry" value="'+escAttr(c.industry)+'" class="inline-edit w-full" onblur="autoSave(\''+c.id+'\',\'industry\',this.value)"><span id="si-industry" class="save-indicator"></span></span></div>'+
               '<div class="detail-row"><span class="detail-label">Service</span><span class="detail-value">'+esc(c.service||'—')+'</span></div>'+
+              '<div class="detail-row"><span class="detail-label">Source</span><span class="detail-value">'+esc(c.lead_source||'manual')+'</span></div>'+
+              '<div class="detail-row"><span class="detail-label">Decision Maker</span><span class="detail-value">'+(q.decisionMaker||'—')+'</span></div>'+
             '</div>'+
-            '<div class="card" style="grid-column:1/-1"><div class="card-title">Notes</div><p class="text-sm text-muted">'+esc(c.notes||'No notes')+'</p></div>'+
+
+            // Qualification Answers
+            '<div class="card"><div class="card-title flex-between">Qualification Answers <span class="text-xs text-muted">from webhook</span></div>'+
+              '<div class="detail-row"><span class="detail-label">Monthly Revenue</span><span class="detail-value">'+(q.monthlyRevenue||q.revenue_range||'—')+'</span></div>'+
+              '<div class="detail-row"><span class="detail-label">Investment Level</span><span class="detail-value">'+(q.investmentLevel||'—')+'</span></div>'+
+              '<div class="detail-row"><span class="detail-label">Ready to Implement</span><span class="detail-value">'+(q.readyToImplement||'—')+'</span></div>'+
+              '<div class="detail-row"><span class="detail-label">Current Lead Sources</span><span class="detail-value">'+(q.currentLeadSources||q.leadSources||q.lead_source||'—')+'</span></div>'+
+              '<div class="detail-row"><span class="detail-label">Biggest Bottleneck</span><span class="detail-value">'+(q.biggestBottleneck||'—')+'</span></div>'+
+              '<div class="detail-row"><span class="detail-label">90-Day Goal</span><span class="detail-value">'+(q.goal90Days||q.ninetyDayGoal||q.goal||'—')+'</span></div>'+
+              '<div class="detail-row"><span class="detail-label">Business Description</span><span class="detail-value">'+(q.businessDescription||'—')+'</span></div>'+
+              (q.plan_tier?'<div class="detail-row"><span class="detail-label">Plan</span><span class="detail-value"><span class="badge badge-green">'+esc(q.plan_tier)+'</span> '+(q.plan_name?esc(q.plan_name):'')+'</span></div>':'')+
+              (q.preferred_slot?'<div class="detail-row"><span class="detail-label">Preferred Slot</span><span class="detail-value">'+(q.preferred_slot.date||'')+' '+(q.preferred_slot.startTime||'')+'</span></div>':'')+
+              (c.booked_date&&c.booked_date!=='N/A'?'<div class="detail-row"><span class="detail-label">Booked Date</span><span class="detail-value">'+esc(c.booked_date)+' '+(c.booked_start?esc(c.booked_start):'')+'</span></div>':'')+
+            '</div>'+
           '</div>'+
-          '<div class="card"><div class="card-title">Pipeline Timeline</div>'+renderPipelineTimeline(c)+'</div>'
+
+          // ── Second Row: Calls + Deals ──
+          '<div class="profile-grid" style="grid-template-columns:1fr 1fr;margin-top:12px">'+
+            // Calls
+            '<div class="card"><div class="card-title flex-between">Call History <span class="text-xs text-muted">'+calls.length+' total</span></div><div id="profile-calls">'+
+              (calls.length
+                ? calls.map(function(cl){
+                    return '<div class="detail-row" style="font-size:12px;padding:8px 0"><span class="detail-label">'+stageBadge(cl.status)+'</span><span class="detail-value" style="text-align:left;display:flex;flex-direction:column"><span style="font-weight:500">'+fmtDate(cl.scheduled_at)+'</span>'+(cl.outcome?'<span class="text-muted text-xs">'+esc(cl.outcome)+'</span>':'')+'</span></div>'
+                  }).join('')
+                : '<div class="text-sm text-muted" style="padding:8px 0">No calls recorded</div>')+
+            '</div></div>'+
+
+            // Deals
+            '<div class="card"><div class="card-title flex-between">Deals <span class="text-xs text-muted">'+deals.length+' total</span></div>'+
+              (deals.length
+                ? deals.map(function(dl){
+                    return '<div class="detail-row" style="font-size:12px;padding:8px 0"><span class="detail-label" style="flex:1">'+(dl.title?esc(dl.title):'Deal')+'</span><span class="detail-value" style="display:flex;gap:6px;align-items:center">'+stageBadge(dl.stage)+'<strong>'+fmtINR(dl.amount_monthly)+'</strong></span></div>'
+                  }).join('')
+                : '<div class="text-sm text-muted" style="padding:8px 0">No deals</div>')+
+            '</div>'+
+          '</div>'+
+
+          // ── Third Row: Projects + Pipeline Timeline ──
+          '<div class="profile-grid" style="grid-template-columns:1fr 1fr;margin-top:12px">'+
+            // Projects
+            '<div class="card"><div class="card-title flex-between">Projects <span class="text-xs text-muted">'+projects.length+' total</span></div>'+
+              (projects.length
+                ? projects.map(function(pr){
+                    return '<div class="detail-row" style="font-size:12px;padding:8px 0"><span class="detail-label">'+esc(pr.name)+'</span><span class="detail-value">'+stageBadge(pr.status)+'</span></div>'
+                  }).join('')
+                : '<div class="text-sm text-muted" style="padding:8px 0">No projects</div>')+
+            '</div>'+
+
+            // Pipeline Timeline
+            '<div class="card"><div class="card-title">Pipeline Timeline</div>'+renderPipelineTimeline(c)+'</div>'+
+          '</div>'+
+
+          // ── Activity Timeline (full width) ──
+          '<div class="card" style="margin-top:12px"><div class="card-title flex-between">Activity Timeline <span class="text-xs text-muted">'+activity.length+' entries</span></div><div id="profile-activity">'+
+            (activity.length
+              ? activity.map(function(a){
+                  return '<div class="detail-row" style="font-size:12px;padding:6px 0"><span class="detail-label" style="text-transform:capitalize">'+esc(a.action.replace(/_/g,' '))+'</span><span class="detail-value text-muted" style="font-size:11px">'+fmtDate(a.created_at)+'</span></div>'
+                }).join('')
+              : '<div class="text-sm text-muted" style="padding:8px 0">No activity yet</div>')+
+          '</div></div>'+
+
+          // ── Notes (full width, inline editable) ──
+          '<div class="card" style="margin-top:12px"><div class="card-title flex-between">Notes <span id="si-notes" class="save-indicator"></span></div>'+
+            '<textarea id="ie-notes" class="inline-textarea" onblur="autoSave(\''+c.id+'\',\'notes\',this.value)" placeholder="Add notes..." style="width:100%;min-height:60px;background:var(--bg-deep);border:1px solid var(--border);color:var(--text-secondary);font-size:13px;padding:10px 12px;border-radius:var(--radius-sm);font-family:inherit;resize:vertical">'+esc(c.notes||'')+'</textarea>'+
+          '</div>'
+
+        startPolling(id)
       }).catch(function(e){toast(e.message,'error');renderClients()})
     }
 
@@ -860,13 +1054,15 @@ var API = window.location.origin + '/crm/api'
           audit_purchased:['audit_folder','audit_start','audit_deadline'],
           audit_delivered:['bottlenecks_found','risks','opportunities','quick_wins','audit_pdf'],
           implementation_proposed:['services','project_scope','timeline','price','impl_status'],
+          awaiting_confirmation:['preferred_slot_date','preferred_slot_start','preferred_slot_end'],
+          confirmed:['confirmed_date','confirmed_start','confirmed_end','calendar_event'],
           client:['start_date','end_date','deliverables','wins','metrics'],
           followup:['reason_not_buying','followup_attempt','next_followup_date','followup_notes'],
           lost:['reason_lost','competitor','lost_notes']
         }
-        var linkFields={linkedin:1,website:1,call_link:1,recording_link:1,audit_folder:1,audit_pdf:1}
+        var linkFields={linkedin:1,website:1,call_link:1,recording_link:1,audit_folder:1,audit_pdf:1,calendar_event:1}
         var priceFields={audit_price:1,price:1}
-        var dateFields={first_contact:1,last_contact:1,call_date:1,proposal_sent_date:1,audit_start:1,audit_deadline:1,start_date:1,end_date:1,next_followup:1}
+        var dateFields={first_contact:1,last_contact:1,call_date:1,proposal_sent_date:1,audit_start:1,audit_deadline:1,start_date:1,end_date:1,next_followup:1,preferred_slot_date:1,preferred_slot_start:1,preferred_slot_end:1,confirmed_date:1,confirmed_start:1,confirmed_end:1}
         var labels={
           linkedin:'LinkedIn',lead_owner:'Lead Owner',website:'Website',
           outreach_channel:'Channel',first_contact:'First Contact',last_contact:'Last Contact',
@@ -885,6 +1081,8 @@ var API = window.location.origin + '/crm/api'
           opportunities:'Opportunities',quick_wins:'Quick Wins',audit_pdf:'PDF',
           services:'Services',project_scope:'Scope',timeline:'Timeline',
           price:'Price',impl_status:'Status',
+          preferred_slot_date:'Preferred Date',preferred_slot_start:'Preferred Start',preferred_slot_end:'Preferred End',
+          confirmed_date:'Confirmed Date',confirmed_start:'Confirmed Start',confirmed_end:'Confirmed End',calendar_event:'Calendar Event',
           start_date:'Start',end_date:'End',deliverables:'Deliverables',
           wins:'Wins',metrics:'Metrics',
           reason_not_buying:'Not Buying',followup_attempt:'Attempt',next_followup_date:'Next Follow-up',followup_notes:'Notes',

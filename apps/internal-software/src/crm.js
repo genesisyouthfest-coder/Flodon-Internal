@@ -6,7 +6,7 @@
 
 const ADMIN_PROFILE_ID = process.env.CRM_ADMIN_PROFILE_ID || '00000000-0000-0000-0000-000000000001'
 const PER_PAGE = 20
-const PIPELINE_STAGES = ['prospect', 'contacted', 'replied', 'discovery_booked', 'discovery_completed', 'audit_proposed', 'audit_purchased', 'audit_delivered', 'implementation_proposed', 'client', 'followup', 'lost']
+const PIPELINE_STAGES = ['prospect', 'contacted', 'replied', 'discovery_booked', 'discovery_completed', 'audit_proposed', 'audit_purchased', 'audit_delivered', 'implementation_proposed', 'awaiting_confirmation', 'confirmed', 'client', 'followup', 'lost']
 const CLIENT_CLOSED_STAGES = ['client', 'followup', 'lost']
 const DEAL_CLOSED_STAGES = ['closed_won', 'closed_lost']
 
@@ -513,7 +513,7 @@ async function updateClient(id, body) {
   if (fetchError) throw fetchError
   if (!existing) throw new Error('Client not found')
 
-  const allowed = ['name', 'email', 'phone', 'company_id', 'role', 'industry', 'source', 'notes', 'service', 'pipeline_stage', 'ai_confirmed', 'is_nurture']
+  const allowed = ['name', 'email', 'phone', 'company_id', 'role', 'industry', 'source', 'notes', 'service', 'pipeline_stage', 'ai_confirmed', 'is_nurture', 'website', 'qualification']
   const updates = {}
   for (const key of allowed) {
     if (body[key] !== undefined) {
@@ -827,6 +827,32 @@ export async function handleCRMRequest(req, res, url, method, body) {
       if (method === 'GET' && params) {
         const data = await getClient(params.id)
         return json(res, 200, { success: true, data })
+      }
+    }
+
+    // GET /crm/api/clients/:id/full — full client data with related records
+    {
+      const params = matchRoute(pathname, '/crm/api/clients/:id/full')
+      if (method === 'GET' && params) {
+        const client = await getClient(params.id)
+
+        const [calls, deals, activity, projects] = await Promise.all([
+          supabase.from('calls').select('*').eq('client_id', params.id).order('created_at', { ascending: false }),
+          supabase.from('deals').select('*').eq('client_id', params.id).order('created_at', { ascending: false }),
+          supabase.from('activity_log').select('*').eq('entity_id', params.id).eq('entity_type', 'client').order('created_at', { ascending: false }).limit(50),
+          supabase.from('projects').select('*').eq('client_id', params.id).order('created_at', { ascending: false }),
+        ])
+
+        return json(res, 200, {
+          success: true,
+          data: {
+            ...client,
+            calls: calls.data || [],
+            deals: deals.data || [],
+            activity: activity.data || [],
+            projects: projects.data || [],
+          }
+        })
       }
     }
 

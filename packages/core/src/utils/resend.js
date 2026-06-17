@@ -116,7 +116,54 @@ export async function handleWebhookEmails(endpoint, payload) {
   const config = await getEmailConfig()
   const adminEmail = config.adminEmail
 
-  if (endpoint === 'lead') {
+  const isLeadEvent = endpoint === 'lead' || endpoint === 'lead.captured' || endpoint === 'booking.slot_requested'
+  const isCancelEvent = endpoint === 'cancel' || endpoint === 'booking.cancelled'
+  const isConfirmedEvent = endpoint === 'booking.confirmed'
+
+  if (isConfirmedEvent) {
+    const clientEmail = payload.email
+    const clientName = payload.name || 'Valued Client'
+    const date = payload.date || 'N/A'
+    const startTime = payload.startTime || 'N/A'
+    const endTime = payload.endTime || ''
+
+    if (clientEmail) {
+      const confirmHtml = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px 20px; color: #1c1917; line-height: 1.6;">
+          <h2 style="font-size: 24px; font-weight: 700; color: #0c0a09; margin-bottom: 20px;">Your Strategy Session is Confirmed!</h2>
+          <p style="font-size: 16px; margin-bottom: 20px;">Hi <strong>${clientName}</strong>,</p>
+          <p style="font-size: 16px; margin-bottom: 20px;">Your Discovery Session has been confirmed for <strong>${date} at ${startTime}${endTime ? ' - ' + endTime : ''} IST</strong>.</p>
+          <p style="font-size: 15px; margin-bottom: 20px;">A calendar invite has been sent to your email. Please ensure you have a stable internet connection and a quiet environment for the call.</p>
+          <p style="font-size: 15px; margin-bottom: 20px;">We look forward to speaking with you!</p>
+          <p style="font-size: 14px; color: #78716c;">— The Flodon Team</p>
+        </div>
+      `
+      await sendEmail({ to: clientEmail, subject: `✅ Confirmed: Flodon Strategy Session | ${date}`, html: confirmHtml })
+    }
+
+    if (adminEmail) {
+      const adminConfirmHtml = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px 20px; color: #1c1917; line-height: 1.6;">
+          <h2 style="font-size: 22px; font-weight: 700; color: #0c0a09; margin-bottom: 20px;">✅ Booking Confirmed</h2>
+          <div style="background-color: #fafaf9; border: 1px solid #e7e5e4; padding: 20px; border-radius: 8px; margin-bottom: 25px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+              <tr><td style="padding: 6px 0; font-weight: 600; color: #78716c; width: 35%;">Name:</td><td style="color: #0c0a09; font-weight: 600;">${clientName}</td></tr>
+              <tr><td style="padding: 6px 0; font-weight: 600; color: #78716c;">Email:</td><td>${clientEmail || 'N/A'}</td></tr>
+              <tr><td style="padding: 6px 0; font-weight: 600; color: #78716c;">Slot:</td><td style="font-weight: 600;">${date} @ ${startTime}${endTime ? ' - ' + endTime : ''} IST</td></tr>
+            </table>
+          </div>
+          <div style="text-align: center;">
+            <a href="${SOFTWARE_DASHBOARD_URL}" style="background-color: #0c0a09; color: #fafaf9; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block;">🖥️ Dashboard</a>
+          </div>
+        </div>
+      `
+      await sendEmail({ to: adminEmail, subject: `✅ [Confirmed] ${clientName}`, html: adminConfirmHtml })
+    }
+
+    return
+  }
+
+  if (isLeadEvent) {
     const clientEmail = payload.email
     const clientName = payload.name || 'Valued Client'
     const phone = payload.phone || payload.phone_number || ''
@@ -214,7 +261,7 @@ export async function handleWebhookEmails(endpoint, payload) {
     }
   } 
   
-  else if (endpoint === 'cancel') {
+  else if (isCancelEvent) {
     const clientEmail = payload.email
     const clientName = payload.name || 'Valued Client'
     const date = payload.date || 'N/A'
@@ -274,15 +321,23 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
   const start = payload.startTime || payload.booked_start || payload.start_time || 'N/A'
   const end = payload.endTime || payload.booked_end || payload.end_time || ''
 
-  // Merge booking info into qualification JSONB
+  // Merge booking info and plan into qualification JSONB
   const qualification = {
     ...q,
     booked_date: date,
     booked_start: start,
-    booked_end: end
+    booked_end: end,
+    ...(payload.plan_tier ? { plan_tier: payload.plan_tier } : {}),
+    ...(payload.plan_name ? { plan_name: payload.plan_name } : {}),
+    ...(payload.preferredSlot ? { preferred_slot: payload.preferredSlot } : {})
   }
 
-  if (endpoint === 'lead') {
+  const isLeadEvent = endpoint === 'lead' || endpoint === 'lead.captured'
+  const isSlotRequestEvent = endpoint === 'booking.slot_requested'
+  const isConfirmedEvent = endpoint === 'booking.confirmed'
+  const isCancelEvent = endpoint === 'cancel' || endpoint === 'booking.cancelled'
+
+  if (isLeadEvent || isSlotRequestEvent) {
     if (!email) {
       log('[Webhook DB] Cannot save lead: Email is required.', 'error')
       return { success: false, error: 'Email is required' }
@@ -290,7 +345,9 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
 
     const revenue = q.monthlyRevenue || ''
     const isUnqualified = revenue.includes('<') || revenue.includes('0-') || revenue.toLowerCase().includes('just starting')
-    const initialStage = isUnqualified ? 'nurture' : 'discovery_booked'
+    const initialStage = isSlotRequestEvent
+      ? 'awaiting_confirmation'
+      : (isUnqualified ? 'nurture' : 'discovery_booked')
     const isNurture = isUnqualified
 
     // 1. Check if client exists
@@ -370,13 +427,15 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
       scheduledAt = new Date().toISOString()
     }
 
+    const callStatus = isSlotRequestEvent ? 'awaiting_confirmation' : 'booked'
+
     const { data: call, error: callError } = await supabase
       .from('calls')
       .insert({
         client_id: client.id,
         prospect_name: name,
         company: q.company || null,
-        status: 'booked',
+        status: callStatus,
         source: 'website',
         scheduled_at: scheduledAt,
       })
@@ -390,13 +449,14 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
     }
 
     // 3. Log Activity
+    const action = isSlotRequestEvent ? 'slot_requested' : 'client_created'
     const { error: actError } = await supabase
       .from('activity_log')
       .insert({
-        action: 'client_created',
+        action,
         entity_type: 'client',
         entity_id: client.id,
-        metadata: { name, source: 'website' },
+        metadata: { name, source: 'website', ...(isSlotRequestEvent ? { preferred_slot: payload.preferredSlot } : {}) },
         profile_id: '00000000-0000-0000-0000-000000000001'
       })
 
@@ -407,7 +467,65 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
     return { success: true, clientId: client.id }
   }
 
-  if (endpoint === 'cancel') {
+  if (isConfirmedEvent) {
+    if (!email) {
+      log('[Webhook DB] Cannot confirm booking: Email is required.', 'error')
+      return { success: false, error: 'Email is required' }
+    }
+
+    // Find client
+    const { data: client } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle()
+
+    if (client) {
+      // Update client stage
+      await supabase
+        .from('clients')
+        .update({
+          pipeline_stage: 'confirmed',
+          qualification
+        })
+        .eq('id', client.id)
+
+      // Update call status to confirmed
+      const { error: callUpdateError } = await supabase
+        .from('calls')
+        .update({
+          status: 'confirmed',
+          scheduled_at: date !== 'N/A' && start !== 'N/A'
+            ? new Date(`${date}T${start}`).toISOString()
+            : undefined
+        })
+        .eq('client_id', client.id)
+        .in('status', ['booked', 'awaiting_confirmation'])
+
+      if (callUpdateError) {
+        log(`[Webhook DB] Failed to confirm call: ${callUpdateError.message}`, 'error')
+      }
+
+      // Log Activity
+      await supabase
+        .from('activity_log')
+        .insert({
+          action: 'booking_confirmed',
+          entity_type: 'client',
+          entity_id: client.id,
+          metadata: { slot: { date, start, end } },
+          profile_id: '00000000-0000-0000-0000-000000000001'
+        })
+
+      log(`[Webhook DB] Confirmed booking for client (id=${client.id})`)
+      return { success: true, clientId: client.id }
+    } else {
+      log(`[Webhook DB] Confirmation received but no client found for email ${email}`, 'warning')
+      return { success: false, error: 'Client not found' }
+    }
+  }
+
+  if (isCancelEvent) {
     if (!email) {
       log('[Webhook DB] Cannot cancel call: Email is required.', 'error')
       return { success: false, error: 'Email is required' }
@@ -437,7 +555,7 @@ export async function handleWebhookDBUpdates(endpoint, payload) {
           outcome: payload.reason || 'Cancelled via webhook'
         })
         .eq('client_id', client.id)
-        .eq('status', 'booked')
+        .in('status', ['booked', 'awaiting_confirmation', 'confirmed'])
 
       if (callUpdateError) {
         log(`[Webhook DB] Failed to cancel calls: ${callUpdateError.message}`, 'error')

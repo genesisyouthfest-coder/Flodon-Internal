@@ -153,6 +153,49 @@ export function buildChurnEmbed(data, username) {
 }
 
 /**
+ * Builds an embed for slot request (awaiting confirmation).
+ */
+export function buildSlotRequestEmbed(payload) {
+  const dashboardUrl = process.env.SOFTWARE_PUBLIC_URL || 'https://internal.flodon.in'
+  const q = payload.qualification || {}
+  const planName = payload.plan_name || 'N/A'
+  const planTier = payload.plan_tier || ''
+  return {
+    title: 'SLOT REQUESTED — Awaiting Confirmation',
+    color: 0x2b2d31,
+    fields: [
+      { name: 'Name', value: payload.name || 'N/A', inline: false },
+      { name: 'Email', value: payload.email || 'N/A', inline: false },
+      { name: 'Phone', value: payload.phone || 'N/A', inline: false },
+      { name: 'Preferred Slot', value: `${payload.date || 'N/A'} | ${payload.startTime || 'N/A'} — ${payload.endTime || ''}`, inline: false },
+      { name: 'Plan', value: `${planName}${planTier ? ` (${planTier})` : ''}`, inline: false },
+      { name: 'Revenue', value: q.monthlyRevenue || 'N/A', inline: false },
+      { name: 'Investment', value: q.investmentLevel || 'N/A', inline: false },
+      { name: 'Quick Actions', value: `🖥️ [Visit Software Dashboard](${dashboardUrl})  ·  💼 [Visit Ops Portal](https://flodon.in/ops)`, inline: false },
+    ],
+    timestamp: new Date().toISOString(),
+  }
+}
+
+/**
+ * Builds an embed for confirmed booking.
+ */
+export function buildBookingConfirmedEmbed(payload) {
+  const dashboardUrl = process.env.SOFTWARE_PUBLIC_URL || 'https://internal.flodon.in'
+  return {
+    title: 'BOOKING CONFIRMED',
+    color: 0x2b2d31,
+    fields: [
+      { name: 'Name', value: payload.name || 'N/A', inline: false },
+      { name: 'Email', value: payload.email || 'N/A', inline: false },
+      { name: 'Confirmed Slot', value: `${payload.date || 'N/A'} | ${payload.startTime || 'N/A'} — ${payload.endTime || ''}`, inline: false },
+      { name: 'Quick Actions', value: `🖥️ [Visit Software Dashboard](${dashboardUrl})  ·  💼 [Visit Ops Portal](https://flodon.in/ops)`, inline: false },
+    ],
+    timestamp: new Date().toISOString(),
+  }
+}
+
+/**
  * Builds a minimalist cancellation/rejection alert.
  */
 export function buildCallStatusEmbed(call, status) {

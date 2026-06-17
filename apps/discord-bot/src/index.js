@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { readdirSync } from 'fs'
 import http from 'http'
-import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, updateWarRoom, log, handleWebhookEmails, handleWebhookDBUpdates } from '@flodon/core'
+import { supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed, buildSlotRequestEmbed, buildBookingConfirmedEmbed, updateWarRoom, log, handleWebhookEmails, handleWebhookDBUpdates } from '@flodon/core'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.BOT_PORT || 10010
@@ -42,8 +42,33 @@ http.createServer(async (req, res) => {
     try {
       const payload = JSON.parse(body)
       const endpoint = url.split('/').pop()
-      
-      // Determine Channel: Both lead and cancel now go to #calls
+      const event = payload.event || endpoint
+
+      // Normalize nested contact, slot, preferredSlot, and plan fields
+      if (payload.contact) {
+        payload.name = payload.name || payload.contact.name
+        payload.email = payload.email || payload.contact.email
+        payload.phone = payload.phone || payload.contact.phone
+        payload.website = payload.website || payload.contact.website
+        payload.businessDescription = payload.businessDescription || payload.contact.businessDescription
+        payload.decisionMaker = payload.decisionMaker || payload.contact.decisionMaker
+      }
+      if (payload.slot) {
+        payload.date = payload.date || payload.slot.date
+        payload.startTime = payload.startTime || payload.slot.startTime
+        payload.endTime = payload.endTime || payload.slot.endTime
+      }
+      if (payload.preferredSlot) {
+        payload.date = payload.date || payload.preferredSlot.date
+        payload.startTime = payload.startTime || payload.preferredSlot.startTime
+        payload.endTime = payload.endTime || payload.preferredSlot.endTime
+      }
+      if (payload.plan) {
+        payload.plan_tier = payload.plan.tier
+        payload.plan_name = payload.plan.name
+      }
+
+      // Determine Channel: All booking events go to #calls
       let channelId = CHANNELS.calls 
       
       // Use fetch if not in cache (essential after bot restart)
@@ -52,21 +77,29 @@ http.createServer(async (req, res) => {
       if (channel) {
         let messageOptions = {}
 
-        // 1. Raw Lead / Booking Payload
-        if (endpoint === 'lead' && payload.name && !payload.embeds) {
-          messageOptions = {
-            content: tagRole(ROLES.sales),
-            embeds: [buildWebLeadEmbed(payload)]
+        // Route by event type
+        if (payload.name && !payload.embeds) {
+          const embedMap = {
+            'lead.captured': buildWebLeadEmbed(payload),
+            'booking.slot_requested': buildSlotRequestEmbed(payload),
+            'booking.confirmed': buildBookingConfirmedEmbed(payload),
+            'booking.cancelled': buildWebhookCancelEmbed(payload),
           }
-        } 
-        // 2. Raw Cancellation Payload
-        else if (endpoint === 'cancel' && payload.name && !payload.embeds) {
-          messageOptions = {
-            content: tagRole(ROLES.sales),
-            embeds: [buildWebhookCancelEmbed(payload)]
+          const embed = embedMap[event]
+
+          if (embed) {
+            messageOptions = {
+              content: tagRole(ROLES.sales),
+              embeds: [embed]
+            }
+          } else {
+            messageOptions = {
+              content: payload.content || null,
+              embeds: payload.embeds || []
+            }
           }
         }
-        // 3. Fallback (Discord pre-formatted payload)
+        // Fallback (Discord pre-formatted payload)
         else {
           messageOptions = {
             content: payload.content || null,
@@ -75,11 +108,11 @@ http.createServer(async (req, res) => {
         }
 
         await channel.send(messageOptions)
-        log(`Webhook processed: ${endpoint} -> ${channelId}`)
+        log(`Webhook processed: ${event} -> ${channelId}`)
 
         // Trigger DB updates and emails in the background (non-blocking)
-        handleWebhookDBUpdates(endpoint, payload).catch(err => log(`DB save failed: ${err.message}`, 'error'))
-        handleWebhookEmails(endpoint, payload).catch(err => log(`Email trigger failed: ${err.message}`, 'error'))
+        handleWebhookDBUpdates(event, payload).catch(err => log(`DB save failed: ${err.message}`, 'error'))
+        handleWebhookEmails(event, payload).catch(err => log(`Email trigger failed: ${err.message}`, 'error'))
 
         res.writeHead(200)
         return res.end('OK')

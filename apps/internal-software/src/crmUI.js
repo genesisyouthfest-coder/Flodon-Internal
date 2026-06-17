@@ -161,6 +161,15 @@ export function getCRMHTML(url) {
     .flex{display:flex}
     .flex-center{display:flex;align-items:center}
     .flex-between{display:flex;justify-content:space-between;align-items:center}
+    .inline-edit{background:transparent;border:none;color:var(--text-secondary);font-size:inherit;font-family:inherit;outline:none;padding:2px 4px;border-radius:var(--radius-sm);transition:all 0.15s ease-out;width:100%;min-width:40px}
+    .inline-edit:hover{background:var(--surface)}
+    .inline-edit:focus{background:var(--bg-deep);border:1px solid var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+    .inline-edit-title{background:transparent;border:none;color:var(--text);font:inherit;outline:none;padding:2px 4px;border-radius:var(--radius-sm);transition:all 0.15s ease-out}
+    .inline-edit-title:hover{background:var(--surface)}
+    .inline-edit-title:focus{background:var(--bg-deep);border:1px solid var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+    .inline-textarea{transition:all 0.15s ease-out}
+    .inline-textarea:focus{border-color:var(--accent)!important;box-shadow:0 0 0 3px var(--accent-glow)!important}
+    .save-indicator{font-size:9px;color:var(--green);opacity:0;transition:opacity 0.3s ease-out;margin-left:4px;white-space:nowrap}
     .gap-4{gap:4px}
     .gap-8{gap:8px}
     .gap-12{gap:12px}

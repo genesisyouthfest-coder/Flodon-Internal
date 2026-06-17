@@ -4,7 +4,8 @@ import { dirname, join } from 'path'
 import { readdirSync, readFileSync } from 'fs'
 import http from 'http'
 import {
-  supabase, CHANNELS, ROLES, buildWebLeadEmbed, buildWebhookCancelEmbed,
+  supabase, CHANNELS, ROLES,
+  buildWebLeadEmbed, buildWebhookCancelEmbed, buildSlotRequestEmbed, buildBookingConfirmedEmbed,
   updateWarRoom, log, handleWebhookEmails, handleWebhookDBUpdates,
   clearEmailConfigCache, processEmailQueue, ADMIN_PROFILE_ID,
 
@@ -504,25 +505,61 @@ http.createServer(async (req, res) => {
       const body = await readBody(req)
       const payload = JSON.parse(body)
       const endpoint = url.split('/').pop()
+      const event = payload.event || endpoint
+
+      // Normalize nested contact, slot, preferredSlot, and plan fields
+      if (payload.contact) {
+        payload.name = payload.name || payload.contact.name
+        payload.email = payload.email || payload.contact.email
+        payload.phone = payload.phone || payload.contact.phone
+        payload.website = payload.website || payload.contact.website
+        payload.businessDescription = payload.businessDescription || payload.contact.businessDescription
+        payload.decisionMaker = payload.decisionMaker || payload.contact.decisionMaker
+      }
+      if (payload.slot) {
+        payload.date = payload.date || payload.slot.date
+        payload.startTime = payload.startTime || payload.slot.startTime
+        payload.endTime = payload.endTime || payload.slot.endTime
+      }
+      if (payload.preferredSlot) {
+        payload.date = payload.date || payload.preferredSlot.date
+        payload.startTime = payload.startTime || payload.preferredSlot.startTime
+        payload.endTime = payload.endTime || payload.preferredSlot.endTime
+      }
+      if (payload.plan) {
+        payload.plan_tier = payload.plan.tier
+        payload.plan_name = payload.plan.name
+      }
 
       let channelId = CHANNELS.calls
       const channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId).catch(() => null)
 
       if (channel) {
         let messageOptions = {}
-        if (endpoint === 'lead' && payload.name && !payload.embeds) {
-          messageOptions = { content: tagRole(ROLES.sales), embeds: [buildWebLeadEmbed(payload)] }
-        } else if (endpoint === 'cancel' && payload.name && !payload.embeds) {
-          messageOptions = { content: tagRole(ROLES.sales), embeds: [buildWebhookCancelEmbed(payload)] }
+
+        if (payload.name && !payload.embeds) {
+          const embedMap = {
+            'lead.captured': buildWebLeadEmbed(payload),
+            'booking.slot_requested': buildSlotRequestEmbed(payload),
+            'booking.confirmed': buildBookingConfirmedEmbed(payload),
+            'booking.cancelled': buildWebhookCancelEmbed(payload),
+          }
+          const embed = embedMap[event]
+
+          if (embed) {
+            messageOptions = { content: tagRole(ROLES.sales), embeds: [embed] }
+          } else {
+            messageOptions = { content: payload.content || null, embeds: payload.embeds || [] }
+          }
         } else {
           messageOptions = { content: payload.content || null, embeds: payload.embeds || [] }
         }
 
         await channel.send(messageOptions)
-        log(`Webhook processed: ${endpoint} -> ${channelId}`)
+        log(`Webhook processed: ${event} -> ${channelId}`)
 
-        handleWebhookDBUpdates(endpoint, payload).catch(err => log(`DB save failed: ${err.message}`, 'error'))
-        handleWebhookEmails(endpoint, payload).catch(err => log(`Email trigger failed: ${err.message}`, 'error'))
+        handleWebhookDBUpdates(event, payload).catch(err => log(`DB save failed: ${err.message}`, 'error'))
+        handleWebhookEmails(event, payload).catch(err => log(`Email trigger failed: ${err.message}`, 'error'))
 
         res.writeHead(200)
         return res.end('OK')
