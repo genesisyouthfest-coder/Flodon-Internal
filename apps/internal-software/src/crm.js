@@ -1,7 +1,5 @@
 ﻿import {
   supabase, queueOutreachEmail, queueCallBookingEmail,
-  listProjects, getProject, createProject, updateProject, deleteProject,
-  listMilestones, createMilestone, updateMilestone, deleteMilestone,
 } from '@flodon/core'
 
 const ADMIN_PROFILE_ID = process.env.CRM_ADMIN_PROFILE_ID || '00000000-0000-0000-0000-000000000001'
@@ -124,7 +122,7 @@ async function getDashboardStats(monthStr) {
   // ── Safe query helpers ──
   let allDeals, closedWonThisMonth, closedWonCount, closedLostCount
   let newClientsThisWeek, newClientsThisMonth, emailQueueRows
-  let overdueTasks, followupClients, nurtureClients, recentActivity
+  let followupClients, nurtureClients, recentActivity
   let clientsByStage, totalClients, allClients
 
   async function qDeals(select, fn) {
@@ -136,7 +134,7 @@ async function getDashboardStats(monthStr) {
   }
 
   try {
-    const [d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13, d14] = await Promise.all([
+    const [d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12, d13] = await Promise.all([
       qDeals('amount_monthly, stage, created_at, client_id', q => q),
       qDeals('amount_monthly, client_id, updated_at', q => q.eq('stage', 'closed_won').gte('updated_at', startOfMonth.toISOString()).lt('updated_at', endOfMonth.toISOString())),
       supabase.from('deals').select('id', { count: 'exact', head: true }).eq('stage', 'closed_won'),
@@ -144,7 +142,6 @@ async function getDashboardStats(monthStr) {
       supabase.from('clients').select('id', { count: 'exact', head: true }).gte('created_at', startOfWeek.toISOString()),
       supabase.from('clients').select('id', { count: 'exact', head: true }).gte('created_at', startOfMonth.toISOString()).lt('created_at', endOfMonth.toISOString()),
       supabase.from('email_queue').select('status'),
-      supabase.from('tasks').select('id', { count: 'exact', head: true }).lt('deadline', now.toISOString()).neq('status', 'done'),
       supabase.from('clients').select('id', { count: 'exact', head: true }).eq('pipeline_stage', 'followup'),
       supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_nurture', true),
       supabase.from('activity_log').select('id, action, entity_type, entity_id, metadata, created_at, profiles(full_name)').order('created_at', { ascending: false }).limit(10),
@@ -159,13 +156,12 @@ async function getDashboardStats(monthStr) {
     newClientsThisWeek = d5?.count || 0
     newClientsThisMonth = d6?.count || 0
     emailQueueRows = d7?.data || []
-    overdueTasks = d8?.count || 0
-    followupClients = d9?.count || 0
-    nurtureClients = d10?.count || 0
-    recentActivity = d11?.data || []
-    clientsByStage = d12?.data || []
-    totalClients = d13?.count || 0
-    allClients = d14?.data || []
+    followupClients = d8?.count || 0
+    nurtureClients = d9?.count || 0
+    recentActivity = d10?.data || []
+    clientsByStage = d11?.data || []
+    totalClients = d12?.count || 0
+    allClients = d13?.data || []
   } catch (e) {
     // fall through with empty defaults
   }
@@ -302,7 +298,6 @@ async function getDashboardStats(monthStr) {
     followupClients: followupClients || 0,
     nurtureClients: nurtureClients || 0,
     emailQueueByStatus,
-    overdueTasks: overdueTasks || 0,
     recentActivity: mappedRecentActivity,
 
     // New premium KPI fields
@@ -562,16 +557,6 @@ async function updateClient(id, body) {
     })
   }
 
-  // Trigger Human Call-Up if AI Confirmation fails
-  if (body.ai_confirmed === false && existing.ai_confirmed !== false) {
-    await supabase.from('tasks').insert({
-      title: `Human Call-Up for ${client.name}`,
-      status: 'pending',
-      client_id: id,
-      assigned_to: ADMIN_PROFILE_ID
-    })
-  }
-
   return {
     ...client,
     source: client.lead_source || 'manual',
@@ -668,32 +653,6 @@ async function updateDeal(id, body) {
 
   if (body.stage !== undefined && body.stage !== existing.stage) {
     await logActivity('stage_changed', 'deal', id, { from: existing.stage, to: body.stage })
-
-    if (body.stage === 'closed_won') {
-      // Trigger Onboarding tasks automatically
-      const now = new Date()
-      const in30Days = new Date()
-      in30Days.setDate(in30Days.getDate() + 30)
-      
-      await supabase.from('tasks').insert([
-        {
-          title: `Delivery Handoff: ${deal.title}`,
-          status: 'pending',
-          deal_id: id,
-          client_id: deal.client_id,
-          deadline: new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days from now
-          assigned_to: ADMIN_PROFILE_ID
-        },
-        {
-          title: `30-Day Check-in: ${deal.title}`,
-          status: 'pending',
-          deal_id: id,
-          client_id: deal.client_id,
-          deadline: in30Days.toISOString(),
-          assigned_to: ADMIN_PROFILE_ID
-        }
-      ])
-    }
   }
 
   return {
@@ -918,58 +877,6 @@ export async function handleCRMRequest(req, res, url, method, body) {
         if (error) throw error
       }
       return json(res, 200, { success: true })
-    }
-
-    // ─── Projects (CRM admin) ───
-    if (method === 'GET' && pathname === '/crm/api/projects') {
-      const data = await listProjects(query)
-      return json(res, 200, { success: true, ...data })
-    }
-
-    if (method === 'POST' && pathname === '/crm/api/projects') {
-      const data = await createProject(body)
-      return json(res, 201, { success: true, data })
-    }
-
-    {
-      const params = matchRoute(pathname, '/crm/api/projects/:id')
-      if (method === 'GET' && params) {
-        const data = await getProject(params.id)
-        return data ? json(res, 200, { success: true, data }) : json(res, 404, { success: false, error: 'Not found' })
-      }
-      if (method === 'PATCH' && params) {
-        const data = await updateProject(params.id, body)
-        return json(res, 200, { success: true, data })
-      }
-      if (method === 'DELETE' && params) {
-        const data = await deleteProject(params.id)
-        return json(res, 200, { success: true, data })
-      }
-    }
-
-    // ─── Project Milestones ───
-    {
-      const params = matchRoute(pathname, '/crm/api/projects/:id/milestones')
-      if (method === 'GET' && params) {
-        const data = await listMilestones(params.id)
-        return json(res, 200, { success: true, data })
-      }
-      if (method === 'POST' && params) {
-        const data = await createMilestone({ ...body, project_id: params.id })
-        return json(res, 201, { success: true, data })
-      }
-    }
-
-    {
-      const params = matchRoute(pathname, '/crm/api/milestones/:id')
-      if (method === 'PATCH' && params) {
-        const data = await updateMilestone(params.id, body)
-        return json(res, 200, { success: true, data })
-      }
-      if (method === 'DELETE' && params) {
-        const data = await deleteMilestone(params.id)
-        return json(res, 200, { success: true, data })
-      }
     }
 
     // ─── Migration helper ───
